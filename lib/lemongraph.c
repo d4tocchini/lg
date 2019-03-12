@@ -1501,7 +1501,7 @@ int kv_pq_cursor_next(graph_txn_t txn, uint8_t *cursor, void **key, size_t *klen
 		goto done;
 	}
 
-	r = cursor_get(&c, &k, &v, MDB_GET_CURRENT);
+	r = cursor_get(&c, &k, &v, DB_GET_CURRENT);
 	if(DB_SUCCESS != r)
 		goto done;
 
@@ -1636,7 +1636,7 @@ int kv_next(kv_t kv, void **key, size_t *klen, void **data, size_t *dlen){
 		pos.data = kbuf;
 		assert(pos.size >= kv->klen);
 		val.data = NULL;
-		r = cursor_get(&c, &pos, &val, MDB_SET_KEY);
+		r = cursor_get(&c, &pos, &val, DB_SET_KEY);
 		assert(val.data);
 		if(DB_SUCCESS == r){
 			if(kv->flags & LG_KV_MAP_KEYS){
