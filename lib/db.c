@@ -15,6 +15,7 @@
 
 #include"lmdb.h"
 #include"db.h"
+#include"osal.h"
 
 #include"static_assert.h"
 
@@ -54,7 +55,7 @@ STATIC_ASSERT(DB_NOTLS      == MDB_NOTLS,      "mismatched MDB_NOTLS");
 STATIC_ASSERT(DB_NOLOCK     == MDB_NOLOCK,     "mismatched MDB_NOLOCK");
 STATIC_ASSERT(DB_NORDAHEAD  == MDB_NORDAHEAD,  "mismatched MDB_NORDAHEAD");
 STATIC_ASSERT(DB_NOMEMINIT  == MDB_NOMEMINIT,  "mismatched MDB_NOMEMINIT");
-STATIC_ASSERT(DB_PREVMETA   == MDB_PREVMETA,   "mismatched MDB_PREVMETA");
+STATIC_ASSERT(DB_PREVMETA   == MDB_PREVSNAPSHOT,   "mismatched MDB_PREVSNAPSHOT");
 
 // check db flags
 STATIC_ASSERT(DB_REVERSEKEY == MDB_REVERSEKEY, "mismatched MDB_REVERSEKEY");
@@ -327,9 +328,9 @@ int db_txn_init(txn_t txn, db_t db, txn_t parent, int flags){
 int db_sync(db_t db, int force){
 	int r = mdb_env_sync((MDB_env *)db->env, force);
 	// lmdb refuses to sync envs opened with mdb_readonly
-	// I am not bothering with figuring out if fdatasync is broken on your platform
+	// I've begun bothering with figuring out cross-platform fdatasync
 	if(EACCES == r)
-		r = fdatasync(db->fd);
+		r = osal_fdatasync(db->fd);
 	return r;
 }
 

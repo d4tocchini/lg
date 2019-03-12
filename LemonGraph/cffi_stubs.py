@@ -247,7 +247,6 @@ int db_snapshot_close(db_snapshot_t snap);
 int db_snapshot_fd(db_snapshot_t snap);
 
 // custom extras
-void watch_parent(int sig);
 void free(void *);
 DIR *opendir(const char *name);
 char *_readdir(DIR *dirp);
@@ -266,10 +265,15 @@ int graph_set_mapsize(graph_t g, size_t mapsize);
 size_t graph_get_mapsize(graph_t g);
 size_t graph_get_disksize(graph_t g);
 db_snapshot_t graph_snapshot_new(graph_t g, int compact);
+
+typedef int HANDLE;
+int osal_fdatasync(HANDLE fd);
+void osal_set_pdeathsig(int sig);
+
 '''
 
 C_KEYWORDS = dict(
-    sources=['deps/lmdb/libraries/liblmdb/mdb.c', 'deps/lmdb/libraries/liblmdb/midl.c', 'lib/lemongraph.c', 'lib/db.c', 'lib/counter.c'],
+    sources=['deps/lmdb/libraries/liblmdb/mdb.c', 'deps/lmdb/libraries/liblmdb/midl.c', 'lib/lemongraph.c', 'lib/db.c', 'lib/counter.c', 'lib/osal.c'],
     include_dirs=['lib','deps/lmdb/libraries/liblmdb'],
     libraries=['z'],
 )
