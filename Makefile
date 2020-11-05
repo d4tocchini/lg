@@ -1,4 +1,4 @@
-PYTHON=pypy
+PYTHON=pypy3
 PYTHON_CFLAGS=-O3 -Wall
 CC+=-pipe
 CFLAGS=-fPIC -Wall -Wunused-variable -Wunused-but-set-variable -O3
@@ -20,6 +20,7 @@ db.o:             deps
 clean:
 	@find . -type d \( -name __pycache__ -o -name .eggs -o -name build -o -name dist -o -name \*.egg-info \) -exec rm -rf {} \; -print -prune
 	@find . -type f \( -name \*.pyc -o -name MANIFEST -o -name \*.o -o -name \*.a -o -name \*.so \) -delete -print
+	rm -rf example/example bench/bench
 
 distclean: clean
 	@find ./deps -mindepth 1 -maxdepth 1 -type d -exec find {} -mindepth 1 -delete \; -delete -print
@@ -31,7 +32,9 @@ deps-update:
 	@$(MAKE) -C deps --no-print-directory update
 
 test: test.py deps
-	CFLAGS="$(PYTHON_CFLAGS)" $(PYTHON) $<
+	$(PYTHON) test.py
+	# CFLAGS="$(PYTHON_CFLAGS)" $(PYTHON) $<
+
 
 install:
 	CFLAGS="$(PYTHON_CFLAGS)" $(PYTHON) setup.py install
@@ -75,11 +78,11 @@ build: build-examples build-bench
 
 .PHONY: run-example.c run-example.py run-bench.c run-bench.py
 
-run-example.c:
+run-example.c: examples/example
 	examples/example
 run-example.py:
 	$(PYTHON) examples/example.py
-run-bench.c:
+run-bench.c: bench/bench
 	bench/bench
 run-bench.py:
-	$(PYTHON) examples/example.py
+	$(PYTHON) bench/bench.py

@@ -36,7 +36,7 @@ i = 0
 while i < args.count:
     # submit new job
     try:
-        r = requests.post(args.url + '/graph/e11f5a4a-a24e-11ea-9379-dca904737b1d', json=job, headers={ 'x-please-pipeline': 'true' })
+        r = requests.post(args.url + '/graph', json=job, headers={ 'x-please-pipeline': 'true' })
     except requests.exceptions.ConnectionError:
         time.sleep(1)
         continue

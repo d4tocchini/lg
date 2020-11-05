@@ -35,14 +35,17 @@ def load_data(txn):
 class TestGraph(unittest.TestCase):
     # each test_foo() method is wrapped w/ setup/teardown around it, so each test has a fresh graph
     def setUp(self):
+        print("TestGraph:setup")
         fd, path = tempfile.mkstemp()
         os.close(fd)
         self.g = Graph(path, nosync=True, nometasync=True)
 
     def tearDown(self):
-        self.g.delete()
+        print("TestGraph:teardown")
+        # self.g.delete()
 
     def test_commit(self):
+        print("test_commit")
         with self.g.transaction(write=True) as txn:
             self.assertEqual(txn.nextID, 1)
             txn.node(type='foo', value='bar')
@@ -50,6 +53,7 @@ class TestGraph(unittest.TestCase):
             txn.commit()
             # should never reach this
             self.assertTrue(False)
+
 
         with self.g.transaction(write=False) as txn:
             self.assertEqual(txn.nextID, 2)
@@ -298,12 +302,15 @@ class TestAlgorithms(unittest.TestCase):
     serializer = Serializer.msgpack()
     # each test_foo() method is wrapped w/ setup/teardown around it, so each test has a fresh graph
     def setUp(self):
+        print("TestAlgorithms:setUp")
         fd, path = tempfile.mkstemp()
         os.close(fd)
         self.g = Graph(path, serialize_property_value=self.serializer)
 
     def tearDown(self):
-        self.g.delete()
+        print("TestAlgorithms:teardown")
+        print(self.g)
+        # self.g.delete()
 
     def test_sp1(self):
         with self.g.transaction(write=True) as txn:

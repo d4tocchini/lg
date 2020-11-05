@@ -127,8 +127,8 @@ class Graph(object):
     def __enter__(self):
         return self
 
-    def __exit__(self, type, value, traceback):
-        self.close()
+    # def __exit__(self, type, value, traceback):
+    #     self.close()
 
     def sync(self, force=False):
         lib.graph_sync(self._graph, int(bool(force)))

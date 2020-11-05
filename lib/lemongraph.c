@@ -18,6 +18,7 @@
 #include<sys/stat.h>
 #include<zlib.h>
 
+#define LG_IMPLEMENTATION
 #include<lemongraph.h>
 
 #include"static_assert.h"
@@ -27,43 +28,7 @@ STATIC_ASSERT(sizeof(uint64_t) == sizeof(txnID_t), "");
 STATIC_ASSERT(sizeof(uint64_t) == sizeof(logID_t), "");
 STATIC_ASSERT(sizeof(uint64_t) == sizeof(strID_t), "");
 
-#define INLINE __attribute__((always_inline)) inline
 
-#define MAX(x, y) ((x) > (y) ? (x) : (y))
-
-// max log entry size is for edge_t
-#define MAX_LOGBUF (1 + esizeof(strID_t) * 2 + esizeof(logID_t) * 3)
-
-//#define debug(args...) do{ fprintf(stderr, "%d: ", __LINE__); fprintf(stderr, args); }while(0)
-//#define debug(args...) while(0);
-
-// provide type-agnostic clz wrapper, and return a more useful value for clz(0)
-#define __clz_wrapper(x) (unsigned int)((x) ? (sizeof(x) == sizeof(long) ? (unsigned)__builtin_clzl(x) : (sizeof(x) == sizeof(long long) ? (unsigned)__builtin_clzll(x) : (unsigned)__builtin_clz((int)(x)))) : sizeof(x) * 8)
-
-// quickly take unsigned numeric types and count minimum number of bytes needed to represent - for varint encoding
-#define intbytes(x) (sizeof(x) - __clz_wrapper(x) / 8)
-
-// encode unsigned values into buffer, advancing iter
-// ensure you have a least 9 bytes per call
-#define encode(x, buffer, iter) do{ \
-	int _shift; \
-	((uint8_t *)(buffer))[iter] = intbytes(x); \
-	for(_shift = (((uint8_t *)(buffer))[iter++] - 1) * 8; _shift >= 0; iter++, _shift -= 8) \
-		((uint8_t *)(buffer))[iter] = ((x) >> _shift) & 0xff; \
-}while(0)
-
-// corresponding decode
-#define decode(x, buffer, iter) do{ \
-	uint8_t _count = ((uint8_t *)(buffer))[iter++]; \
-	assert(sizeof(x) >= _count); \
-	x = 0; \
-	while(_count--) \
-		x = (x<<8) + ((uint8_t *)(buffer))[iter++]; \
-}while(0)
-
-#define enclen(buffer, offset) (1 + ((uint8_t *)(buffer))[offset])
-
-#define esizeof(x) (sizeof(x)+1)
 
 int pack_uints(int count, uint64_t *ints, void *buffer){
 	int i, len = 0;
@@ -112,96 +77,6 @@ char *graph_strerror(int err){
 	return db_strerror(err);
 }
 
-// here's the deal - the actual key in the db is comprised of 3 serialized uints:
-//	txnID: incrementing sequence of transaction numbers, starting at 1
-//	       each write txn that caused the log to grow will get it's own txnID
-//	start: first logID in the txn, will be >= 1
-//	count: number of logIDs accumulated in the txn, will be >= 1
-//
-// when this function is called, at least one of the params will be an actual key as above
-// if the txnID for the other decodes to zero, then it is a query operation. Decoding the second uint determines
-//	whether the 3rd uint should be tested against (0) the txnID or (non-zero) the start/count range
-//
-// with one btree, this lets us quickly:
-//	map txnID to logID range
-//	map logID to containing txnID
-static int magic_txnlog_cmp(const buffer_t *a, const buffer_t *b){
-	int ia = 0, ib = 0;
-	txnID_t ta, tb;
-	decode(ta, a->data, ia);
-	decode(tb, b->data, ib);
-	if(!ta){
-		assert(tb);
-		// a is query, b is actual key in db
-		decode(ta, a->data, ia);
-		if(ta){
-			decode(ta, a->data, ia);
-			uint64_t start, count;
-			decode(start, b->data, ib);
-			if(ta < start)
-				return -1;
-			decode(count, b->data, ib);
-			return ta >= (start + count);
-		}
-		// txnID query
-		decode(ta, a->data, ia);
-	}else if(!tb){
-		// I don't believe this happens today, but just in case ...
-		return - magic_txnlog_cmp(b, a);
-	}
-	return ta < tb ? -1 : ta > tb ? 1 : 0;
-}
-
-#define DBS (sizeof(DB_INFO)/sizeof(*DB_INFO))
-
-#define DB_LOG          0
-#define DB_KEY          1
-#define DB_KEY_IDX      2
-#define DB_SCALAR       3
-#define DB_SCALAR_IDX   4
-#define DB_NODE_IDX     5
-#define DB_EDGE_IDX     6
-#define DB_PROP_IDX     7
-#define DB_SRCNODE_IDX  8
-#define DB_TGTNODE_IDX  9
-#define DB_KV          10
-#define DB_KVBM        11
-#define DB_TXNLOG      12
-
-static dbi_t DB_INFO[] = {
-	// strID_t strID => bytes (append-only)
-	[DB_SCALAR] = { "scalar", DB_INTEGERKEY, NULL },
-
-	// uint32_t crc => strID_t strIDs[]
-	[DB_SCALAR_IDX] = { "scalar_idx", DB_DUPSORT|DB_INTEGERKEY|DB_DUPFIXED|DB_INTEGERDUP, NULL },
-
-	// varint_t logID => entry_t (appends & updates)
-	[DB_LOG] = { "log", 0, NULL },
-
-	// varint_t [type, val, logID] => ''
-	[DB_NODE_IDX] = { "node_idx", 0, NULL },
-
-	// varint_t [type, val, src, tgt, logID]
-	[DB_EDGE_IDX] = { "edge_idx", 0, NULL },
-
-	// varint_t pid, key, logID => ''
-	[DB_PROP_IDX] = { "prop_idx", 0, NULL },
-
-	// varint_t node, type, edge => ''
-	[DB_SRCNODE_IDX] = { "srcnode_idx", 0, NULL },
-
-	// varint_t node, type, edge => ''
-	[DB_TGTNODE_IDX] = { "tgtnode_idx", 0, NULL },
-
-	// varint_t domain, key => varint_t val
-	[DB_KV] = { "kv", 0, NULL },
-
-	// varint_t domain, key => varint_t val
-	[DB_KVBM] = { "kvbm", 0, NULL },
-
-	// varint_t [txnID, start, count] => varint_t [node_count, edge_count] (append only)
-	[DB_TXNLOG] = { "txnlog", 0, magic_txnlog_cmp }
-};
 
 
 typedef struct txn_info_t * txn_info_t;
@@ -213,141 +88,12 @@ struct txn_info_t{
 	uint64_t edges;
 };
 
-// return 0 on error
-static INLINE uint64_t _nextID(graph_txn_t txn, const int consume, uint64_t * const cache, const int db1, const int venc){
-	if(consume && TXN_RO(txn)){
-		errno = EINVAL;
-		return 0;
-	}
-
-	int r;
-	unsigned int i;
-	uint64_t id = *cache;
-	if(0 == id){
-		struct cursor_t c;
-		buffer_t key;
-		r = txn_cursor_init(&c, (txn_t)txn, db1);
-		if(DB_SUCCESS == r)
-			r = cursor_last_key(&c, &key, NULL, 0);
-		cursor_close(&c);
-		switch(r){
-			case DB_SUCCESS:
-				if(venc){
-					i = 0;
-					decode(id, key.data, i);
-					assert(i == key.size);
-				}else{
-					assert(sizeof(id) == key.size);
-					memcpy(&id, key.data, sizeof(id));
-				}
-				// passthrough
-			case DB_NOTFOUND:
-				*cache = ++id;
-				break;
-			default:
-				errno = r;
-				return 0;
-		}
-	}
-	if(consume && id && 0 == ++(*cache)){
-		*cache = id;
-		errno = EOVERFLOW;
-		id = 0;
-	}
-	return id;
-}
 
 static INLINE logID_t _graph_log_nextID(graph_txn_t txn, int consume){
 	return _nextID(txn, consume, &txn->next_logID, DB_LOG, 1);
 }
 
-// returns 1 for success, 0 for failure (only for readonly)
-static INLINE int __resolve_blob(graph_txn_t txn, uint64_t *ret, char const *data, const size_t len, const int readonly, uint64_t * const cache, int db1, int db2){
-	assert(data);
 
-	int r;
-	size_t count;
-	uint64_t id;
-	uint32_t chk;
-
-	struct cursor_t c, idx;
-	buffer_t val, vkey, ival, ikey = { .data = &chk, .size = sizeof(chk) };
-
-	r = txn_cursor_init(&c, (txn_t)txn, db1);
-	assert(DB_SUCCESS == r);
-	r = txn_cursor_init(&idx, (txn_t)txn, db2);
-	assert(DB_SUCCESS == r);
-
-	// fill in checksum
-	chk = crc32(0, (void *)data, len);
-
-	int retval = 1;
-
-	r = cursor_get(&idx, &ikey, &ival, DB_SET_KEY);
-	if(DB_SUCCESS == r){
-		r = cursor_count(&idx, &count);
-		assert(DB_SUCCESS == r);
-		while(1){
-			memcpy(&vkey, &ival, sizeof(ival));
-			// query main db
-			r = cursor_get(&c, &vkey, &val, DB_SET_KEY);
-			assert(DB_SUCCESS == r);
-			if(val.size == len && memcmp(val.data, data, len) == 0){
-				assert(sizeof(*ret) == vkey.size);
-				memcpy(ret, vkey.data, sizeof(*ret));
-				goto done;
-			}
-			if(0 == --count)
-				break;
-			r = cursor_get(&idx, &ikey, &vkey, DB_NEXT_DUP);
-			assert(DB_SUCCESS == r);
-		}
-		r = DB_NOTFOUND;
-	}
-	assert(DB_NOTFOUND == r);
-
-	// no key at all, or no matching strings
-
-	// bail out now for read-only requests
-	if(readonly){
-		retval = 0;
-		*ret = 0;
-		goto done;
-	}
-
-	// figure out next ID to use
-	*ret = id = _nextID(txn, 1, cache, db1, 0);
-	assert(id);
-
-	// store new string in db
-	vkey.size = sizeof(id);
-	vkey.data = &id;
-	val.size = len;
-	r = cursor_put(&c, &vkey, &val, DB_APPEND|DB_RESERVE);
-	assert(DB_SUCCESS == r);
-	memcpy(val.data, data, len);
-
-	// and add index entry
-	ikey.data = &chk;
-	ikey.size = sizeof(chk);
-	assert(&id == vkey.data);
-	r = cursor_put(&idx, &ikey, &vkey, DB_APPENDDUP);
-	assert(DB_SUCCESS == r);
-
-done:
-	cursor_close(&c);
-	cursor_close(&idx);
-	return retval;
-}
-
-static INLINE int _string_resolve(graph_txn_t txn, strID_t *ret, void const *data, const size_t len, int readonly){
-	if(NULL == data){
-		assert(0 == len);
-		*ret = 0;
-		return 1;
-	}
-	return __resolve_blob(txn, ret, data, len, readonly, &txn->next_strID, DB_SCALAR, DB_SCALAR_IDX);
-}
 
 static INLINE logID_t _cleanse_beforeID(graph_txn_t txn, logID_t beforeID){
 	return (beforeID && _graph_log_nextID(txn, 0) > beforeID) ? beforeID : 0;
@@ -631,14 +377,14 @@ static INLINE void _prop_index(graph_txn_t txn, prop_t e){
 }
 
 static INLINE logID_t __prop_resolve(graph_txn_t txn, prop_t e, logID_t beforeID, int readonly){
+	e->rectype = GRAPH_PROP;
 	// stash the old value, in case we cared
 	strID_t val = e->val;
-
 	// stomps e->val
 	if((_prop_lookup(txn, e, beforeID) && val == e->val) || readonly)
 		return e->id;
-
 	assert(0 == beforeID);
+	// e->rectype = GRAPH_PROP;
 	e->val = val;
 	e->next = 0;
 	e->is_new = 1;
@@ -648,10 +394,11 @@ static INLINE logID_t __prop_resolve(graph_txn_t txn, prop_t e, logID_t beforeID
 }
 
 static INLINE logID_t __node_resolve(graph_txn_t txn, node_t e, logID_t beforeID, int readonly) {
+	e->rectype = GRAPH_NODE;
 	if(_node_lookup(txn, e, beforeID) || readonly)
 		return e->id;
-
 	assert(0 == beforeID);
+	// e->rectype = GRAPH_NODE;
 	e->next = 0;
 	e->is_new = 1;
 	txn->node_delta++;
@@ -661,10 +408,11 @@ static INLINE logID_t __node_resolve(graph_txn_t txn, node_t e, logID_t beforeID
 }
 
 static INLINE logID_t __edge_resolve(graph_txn_t txn, edge_t e, logID_t beforeID, int readonly){
+	e->rectype = GRAPH_EDGE;
 	if(_edge_lookup(txn, e, beforeID) || readonly)
 		return e->id;
-
 	assert(0 == beforeID);
+	// e->rectype = GRAPH_EDGE;
 	e->next = 0;
 	e->is_new = 1;
 	txn->edge_delta++;
@@ -676,7 +424,6 @@ static INLINE logID_t __edge_resolve(graph_txn_t txn, edge_t e, logID_t beforeID
 
 static INLINE node_t _node_resolve(graph_txn_t txn, void *type, size_t tlen, void *val, size_t vlen, logID_t beforeID, int readonly){
 	node_t e = malloc(sizeof(*e));
-	e->rectype = GRAPH_NODE;
 	if(_string_resolve(txn, &e->type, type, tlen, readonly) &&
 	   _string_resolve(txn, &e->val, val, vlen, readonly) &&
 	   __node_resolve(txn, e, beforeID, readonly) ){
@@ -688,7 +435,6 @@ static INLINE node_t _node_resolve(graph_txn_t txn, void *type, size_t tlen, voi
 
 static INLINE edge_t _edge_resolve(graph_txn_t txn, node_t src, node_t tgt, void *type, size_t tlen, void *val, size_t vlen, logID_t beforeID, int readonly){
 	edge_t e = malloc(sizeof(*e));
-	e->rectype = GRAPH_EDGE;
 	assert(src && tgt);
 	e->src = src->id;
 	e->tgt = tgt->id;
@@ -703,7 +449,6 @@ static INLINE edge_t _edge_resolve(graph_txn_t txn, node_t src, node_t tgt, void
 
 static INLINE prop_t _prop_resolve(graph_txn_t txn, entry_t parent, void *key, size_t klen, void *val, size_t vlen, logID_t beforeID, int readonly){
 	prop_t e = malloc(sizeof(*e));
-	e->rectype = GRAPH_PROP;
 	e->pid = parent->id;
 	if(_string_resolve(txn, &e->key, key, klen, readonly) &&
 	   _string_resolve(txn, &e->val, val, vlen, readonly) &&
@@ -815,18 +560,9 @@ logID_t graph_prop_updateID(graph_txn_t txn, prop_t p, logID_t beforeID){
 	return graph_entry_updateID(txn, (entry_t)p, beforeID);
 }
 
-int graph_string_lookup(graph_txn_t txn, strID_t *id, void const *data, const size_t len){
-	return _string_resolve(txn, id, data, len, 1);
-}
-
-int graph_string_resolve(graph_txn_t txn, strID_t *id, void const *data, const size_t len){
-	return _string_resolve(txn, id, data, len, 0);
-}
-
 logID_t graph_log_nextID(graph_txn_t txn){
 	return _graph_log_nextID(txn, 0);
 }
-
 
 logID_t graph_delete(graph_txn_t txn, entry_t e){
 	return _entry_delete(txn, e->id);
@@ -867,51 +603,15 @@ void graph_unset(graph_txn_t txn, void *key, size_t klen){
 	_entry_unset(txn, 0, key, klen);
 }
 
-static INLINE logID_t _node_resolve_id(graph_txn_t txn, node_t e, logID_t beforeID, int readonly){	
-	// e->rectype = GRAPH_NODE;
-	return __node_resolve(txn, e, beforeID, readonly);	
-}
-static INLINE logID_t _edge_resolve_id(graph_txn_t txn, edge_t e, logID_t beforeID, int readonly){	
-	e->rectype = GRAPH_EDGE;
-	assert(e->src && e->tgt);	
-	return __edge_resolve(txn, e, beforeID, readonly);	
-}
-static INLINE logID_t _prop_resolve_id(graph_txn_t txn, logID_t parent_id, prop_t e, logID_t beforeID, int readonly){	
-	e->rectype = GRAPH_PROP;
-	e->pid = parent_id;
-	return __prop_resolve(txn, e, beforeID, readonly);		
-}
-
-
-// logID_t graph_node_id_resolve(graph_txn_t txn, node_t e){
-logID_t graph_nodeID_resolve(graph_txn_t txn, strID_t type, strID_t val){
-	struct node_t e = {
-		.rectype = GRAPH_NODE,
-		.type = type,
-		.val = val
-	};
-	return _node_resolve_id(txn, &e, 0, 0);
-}
-// logID_t graph_edge_id_resolve(graph_txn_t txn, edge_t e){
-logID_t graph_edgeID_resolve(graph_txn_t txn, logID_t src, logID_t tgt, strID_t type, strID_t val){
-	struct edge_t e = {
-		.rectype = GRAPH_EDGE,
-		.src = src,
-		.tgt = tgt,
-		.type = type,
-		.val = val
-	};
-	return _edge_resolve_id(txn, &e, 0, 0);
-}
 // logID_t graph_ID_set(graph_txn_t txn, logID_t parent_id, prop_t e){
 logID_t graph_ID_set(graph_txn_t txn, logID_t parent_id, strID_t key, strID_t val){
 	struct prop_t e = {
 		.rectype = GRAPH_PROP,
-		.pid = parent_id,		
+		.pid = parent_id,
 		.key = key,
 		.val = val
 	};
-	return _prop_resolve_id(txn, parent_id, &e, 0, 0);
+	return __prop_resolve(txn, &e, 0, 0);
 }
 
 
@@ -931,6 +631,22 @@ node_t graph_node_lookup(graph_txn_t txn, void *type, size_t tlen, void *val, si
 node_t graph_node_resolve(graph_txn_t txn, void *type, size_t tlen, void *val, size_t vlen){
 	return _node_resolve(txn, type, tlen, val, vlen, 0, 0);
 }
+
+logID_t node_resolve(graph_txn_t txn, node_t e, strID_t type, strID_t val) {
+	e->type = type;
+	e->val = val;
+	return __node_resolve(txn, e, 0, 0);
+}
+
+logID_t graph_nodeID_resolve(graph_txn_t txn, strID_t type, strID_t val){
+	struct node_t e = {
+		.rectype = GRAPH_NODE,
+		.type = type,
+		.val = val
+	};
+	return __node_resolve(txn, &e, 0, 0);
+}
+
 
 prop_t graph_node_get(graph_txn_t txn, node_t node, void *key, size_t klen, logID_t beforeID){
 	return _prop_resolve(txn, (entry_t)node, key, klen, NULL, 0, beforeID, 1);
@@ -962,65 +678,82 @@ edge_t graph_edge_resolve(graph_txn_t txn, node_t src, node_t tgt, void *type, s
 	return _edge_resolve(txn, src, tgt, type, tlen, val, vlen, 0, 0);
 }
 
-prop_t graph_edge_get(graph_txn_t txn, edge_t edge, void *key, size_t klen, logID_t beforeID){
+logID_t edge_resolve(graph_txn_t txn, edge_t e, logID_t src, logID_t tgt, strID_t type, strID_t val) {
+	e->type = type;
+	e->val = val;
+	e->src = src;
+	e->tgt = tgt;
+	return __edge_resolve(txn, e, 0, 0);
+}
+
+logID_t graph_edgeID_resolve(graph_txn_t txn, logID_t src, logID_t tgt, strID_t type, strID_t val){
+	assert(src && tgt);
+	struct edge_t e = {
+		.rectype = GRAPH_EDGE,
+		.src = src,
+		.tgt = tgt,
+		.type = type,
+		.val = val
+	};
+	return __edge_resolve(txn, &e, 0, 0);
+}
+
+prop_t graph_edge_get(graph_txn_t txn, edge_t edge, void *key, size_t klen, logID_t beforeID)
+{
 	return _prop_resolve(txn, (entry_t)edge, key, klen, NULL, 0, beforeID, 1);
 }
 
-prop_t graph_edge_set(graph_txn_t txn, edge_t edge, void *key, size_t klen, void *val, size_t vlen){
+prop_t graph_edge_set(graph_txn_t txn, edge_t edge, void *key, size_t klen, void *val, size_t vlen)
+{
 	return _prop_resolve(txn, (entry_t)edge, key, klen, val, vlen, 0, 0);
 }
 
-void graph_edge_unset(graph_txn_t txn, edge_t e, void *key, size_t klen){
+void graph_edge_unset(graph_txn_t txn, edge_t e, void *key, size_t klen)
+{
 	_entry_unset(txn, e->id, key, klen);
 }
 
-struct kv_t {
-	graph_txn_t txn;
-	buffer_t key, data;
-	int flags;
-	unsigned int refs, klen;
-	uint8_t kbuf[511];
-};
-
-struct kv_iter_t {
-	struct iter_t iter;
-	kv_t kv;
-};
-
-kv_t graph_kv(graph_txn_t txn, const void *domain, const size_t dlen, const int flags){
-	const int readonly = (TXN_RO(txn) || (flags & LG_KV_RO));
-	kv_t kv = NULL;
-
-	strID_t domainID;
-	if(!_string_resolve(txn, &domainID, domain, dlen, readonly))
-		goto fail;
-
+kv_t graph_kv(graph_txn_t txn, const void *domain, const size_t dlen, const int flags)
+{
+	// kv_t kv = NULL;
+	// strID_t domainID;
+	// if (!_string_resolve(txn, &domainID, domain, dlen, (TXN_RO(txn) || (flags & LG_KV_RO))))
+	// 	goto FAIL;
+	// kv = malloc(sizeof(*kv));
+	// if (!kv)
+	// 	goto FAIL;
+	// kv->txn = txn;
+	// kv->flags = flags;
+	// kv->refs = 1;
+	// kv->klen = 0;
+	// encode(domainID, kv->kbuf, kv->klen);
+	gkv_t* kv = NULL;
+	d_t d = d_buf(domain, dlen);
+	if ( !d_resolve(txn, &d, (TXN_RO(txn) || (flags & LG_KV_RO))) )
+        goto FAIL;
 	kv = malloc(sizeof(*kv));
-	if(!kv)
-		goto fail;
-
-	kv->txn = txn;
-	kv->flags = flags;
-	kv->refs = 1;
-	kv->klen = 0;
-	encode(domainID, kv->kbuf, kv->klen);
-
+	if (!kv)
+		goto FAIL;
+	gkv_init(txn, kv, d, flags);
 	return kv;
-fail:
+FAIL:
 	if(kv)
 		free(kv);
 	return NULL;
 }
 
-static INLINE int _kv_setup_key(kv_t kv, void *key, size_t klen, int query){
+
+
+static INLINE int _kv_setup_key(kv_t kv, void *key, size_t klen, int query)
+{
 	strID_t id;
 	kv->key.data = kv->kbuf;
 	kv->key.size = kv->klen;
-	if(kv->flags & LG_KV_MAP_KEYS){
-		if(!_string_resolve(kv->txn, &id, key, klen, query))
+	if (kv->flags & LG_KV_MAP_KEYS){
+		if (!_string_resolve(kv->txn, &id, key, klen, query))
 			return 0;
 		encode(id, kv->kbuf, kv->key.size);
-	}else{
+	} else {
 		assert(klen <= sizeof(kv->kbuf) - kv->klen);
 		memcpy(&kv->kbuf[kv->klen], key, klen);
 		kv->key.size += klen;
@@ -1028,28 +761,26 @@ static INLINE int _kv_setup_key(kv_t kv, void *key, size_t klen, int query){
 	return 1;
 }
 
-// fetch string by encoded ID
-static INLINE char *graph_string_enc(graph_txn_t txn, void *id_enc, size_t *slen){
-	strID_t id;
-	int len = 0;
-	decode(id, id_enc, len);
-	return graph_string(txn, id, slen);
-}
 
-void *kv_get(kv_t kv, void *key, size_t klen, size_t *dlen){
-	void *data = NULL;
-	if(!_kv_setup_key(kv, key, klen, 1))
-		goto done;
-	if(db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->data) != DB_SUCCESS)
-		goto done;
-	if(kv->flags & LG_KV_MAP_DATA){
-		data = graph_string_enc(kv->txn, kv->data.data, dlen);
-	}else{
-		data = kv->data.data;
-		*dlen = kv->data.size;
-	}
-done:
-	return data;
+void *kv_get(kv_t kv, void *key, size_t klen, size_t *dlen)
+{
+	d_t val;
+	gkv_get(kv, d_buf(key, klen), &val);
+	return val.data; // return NULL;
+
+// 	void *data = NULL;
+// 	if (!_kv_setup_key(kv, key, klen, 1))
+// 		goto done;
+// 	if (db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->val) != DB_SUCCESS)
+// 		goto done;
+// 	if (kv->flags & LG_KV_MAP_DATA){
+// 		data = graph_string_enc(kv->txn, kv->val.data, dlen);
+// 	} else {
+// 		data = kv->val.data;
+// 		*dlen = kv->val.size;
+// 	}
+// done:
+//  return data;
 }
 
 int kv_del(kv_t kv, void *key, size_t klen){
@@ -1068,14 +799,14 @@ int kv_put(kv_t kv, void *key, size_t klen, void *data, size_t dlen){
 		strID_t id;
 		if(!_string_resolve(kv->txn, &id, data, dlen, 0))
 			goto done;
-		kv->data.data = dbuf;
-		kv->data.size = 0;
-		encode(id, dbuf, kv->data.size);
+		kv->val.data = dbuf;
+		kv->val.size = 0;
+		encode(id, dbuf, kv->val.size);
 	}else{
-		kv->data.data = data;
-		kv->data.size = dlen;
+		kv->val.data = data;
+		kv->val.size = dlen;
 	}
-	ret = (db_put((txn_t)kv->txn, DB_KV, &kv->key, &kv->data, 0) == DB_SUCCESS);
+	ret = (db_put((txn_t)kv->txn, DB_KV, &kv->key, &kv->val, 0) == DB_SUCCESS);
 done:
 	return ret;
 }
@@ -1165,16 +896,16 @@ int kv_fifo_push_n(kv_t kv, void **datas, size_t *lens, const int count){
 				r = DB_NOTFOUND;
 				goto done;
 			}
-			kv->data.size = 0;
-			kv->data.data = edata;
-			encode(id, edata, kv->data.size);
+			kv->val.size = 0;
+			kv->val.data = edata;
+			encode(id, edata, kv->val.size);
 		}else{
-			kv->data.data = datas[i];
-			kv->data.size = lens[i];
+			kv->val.data = datas[i];
+			kv->val.size = lens[i];
 		}
 		if(i)
 			kv->key.size = kv->klen + ctr_inc(kv->kbuf + kv->klen);
-		r = cursor_put(&cursor, &kv->key, &kv->data, 0);
+		r = cursor_put(&cursor, &kv->key, &kv->val, 0);
 	}
 	if(DB_SUCCESS == r)
 		r = i;
@@ -1194,13 +925,13 @@ int kv_fifo_peek_n(kv_t kv, void **datas, size_t *lens, const int count){
 	const int resolve = kv->flags & (LG_KV_MAP_KEYS|LG_KV_MAP_DATA);
 	r = cursor_first_key(&cursor, &kv->key, kv->kbuf, kv->klen);
 	for(i = 0; DB_SUCCESS == r && i < count; i++){
-		r = cursor_get(&cursor, &kv->key, &kv->data, DB_SET_KEY);
+		r = cursor_get(&cursor, &kv->key, &kv->val, DB_SET_KEY);
 		assert(DB_SUCCESS == r);
 		if(resolve){
-			datas[i] = graph_string_enc(kv->txn, kv->data.data, &lens[i]);
+			datas[i] = graph_string_enc(kv->txn, kv->val.data, &lens[i]);
 		}else{
-			datas[i] = kv->data.data;
-			lens[i] = kv->data.size;
+			datas[i] = kv->val.data;
+			lens[i] = kv->val.size;
 		}
 		r = cursor_get(&cursor, &kv->key, NULL, DB_NEXT);
 		if(DB_SUCCESS != r || kv->key.size < kv->klen || memcmp(kv->key.data, kv->kbuf, kv->klen))
@@ -1284,12 +1015,12 @@ int kv_pq_get(kv_t kv, void *key, size_t klen){
 	kv->key.size += klen;
 
 	// see if it's already somewhere in the queue
-	r = db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->data);
+	r = db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->val);
 	if(DB_SUCCESS != r)
 		goto done;
 
 	// grab priority byte
-	r = *(uint8_t *)kv->data.data;
+	r = *(uint8_t *)kv->val.data;
 done:
 	return r;
 }
@@ -1330,7 +1061,7 @@ int kv_pq_del(kv_t kv, void *key, size_t klen){
 	kv->key.size += klen;
 
 	// see if it's already somewhere in the queue
-	r = db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->data);
+	r = db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->val);
 
 
 	// if found, use returned priority, counter to delete from primary index
@@ -1342,9 +1073,9 @@ int kv_pq_del(kv_t kv, void *key, size_t klen){
 		kv->kbuf[kv->key.size++] = 0;
 
 		// append old_pri, counter
-		assert(kv->key.size + kv->data.size <= sizeof(kv->kbuf));
-		memcpy(kv->kbuf + kv->key.size, kv->data.data, kv->data.size);
-		kv->key.size += kv->data.size;
+		assert(kv->key.size + kv->val.size <= sizeof(kv->kbuf));
+		memcpy(kv->kbuf + kv->key.size, kv->val.data, kv->val.size);
+		kv->key.size += kv->val.size;
 
 		// delete from primary index
 		r = db_del((txn_t)kv->txn, DB_KV, &kv->key, NULL);
@@ -1397,7 +1128,7 @@ int kv_pq_add(kv_t kv, void *key, size_t klen, uint8_t priority){
 	kv->key.size += klen;
 
 	// see if it's already somewhere in the queue
-	r = db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->data);
+	r = db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->val);
 
 	// start with encoded domID
 	kv->key.data = kv->kbuf;
@@ -1408,9 +1139,9 @@ int kv_pq_add(kv_t kv, void *key, size_t klen, uint8_t priority){
 	// if found, use returned priority, counter to delete from primary index
 	if(DB_SUCCESS == r){
 		// append old_pri, counter
-		assert(kv->key.size + kv->data.size <= sizeof(kv->kbuf));
-		memcpy(kv->kbuf + kv->key.size, kv->data.data, kv->data.size);
-		kv->key.size += kv->data.size;
+		assert(kv->key.size + kv->val.size <= sizeof(kv->kbuf));
+		memcpy(kv->kbuf + kv->key.size, kv->val.data, kv->val.size);
+		kv->key.size += kv->val.size;
 		// delete from primary index
 		r = db_del((txn_t)kv->txn, DB_KV, &kv->key, NULL);
 		assert(DB_SUCCESS == r);
@@ -1435,9 +1166,9 @@ int kv_pq_add(kv_t kv, void *key, size_t klen, uint8_t priority){
 	memcpy(pri_counter, kv->kbuf + kv->klen + 1, pc_len);
 
 	// add in new record in primary index
-	kv->data.data = key;
-	kv->data.size = klen;
-	r = db_put((txn_t)kv->txn, DB_KV, &kv->key, &kv->data, 0);
+	kv->val.data = key;
+	kv->val.size = klen;
+	r = db_put((txn_t)kv->txn, DB_KV, &kv->key, &kv->val, 0);
 	assert(DB_SUCCESS == r);
 
 	// add reverse record in secondary index
@@ -1445,9 +1176,9 @@ int kv_pq_add(kv_t kv, void *key, size_t klen, uint8_t priority){
 	memcpy(kv->kbuf + kv->klen + 1, key, klen);
 	kv->key.data = kv->kbuf;
 	kv->key.size = kv->klen + 1 + klen;
-	kv->data.data = pri_counter;
-	kv->data.size = pc_len;
-	r = db_put((txn_t)kv->txn, DB_KV, &kv->key, &kv->data, 0);
+	kv->val.data = pri_counter;
+	kv->val.size = pc_len;
+	r = db_put((txn_t)kv->txn, DB_KV, &kv->key, &kv->val, 0);
 	assert(DB_SUCCESS == r);
 
 done:
@@ -1981,7 +1712,7 @@ graph_iter_t graph_prop_props(graph_txn_t txn, prop_t prop, logID_t beforeID){
 
 graph_t graph_open(const char * const path, const int flags, const int mode, const int db_flags){
 	int r;
-	graph_t g = malloc(sizeof(struct graph_t));
+	graph_t g = malloc(sizeof(*g));
 	if(g){
 		// fixme? padsize hardcoded to 1gb
 		// explicitly disable DB_WRITEMAP - graph_txn_reset current depends on nested write txns
@@ -1996,7 +1727,7 @@ graph_t graph_open(const char * const path, const int flags, const int mode, con
 }
 
 graph_txn_t graph_txn_begin(graph_t g, graph_txn_t parent, unsigned int flags){
-	graph_txn_t txn = malloc(sizeof(struct graph_txn_t));
+	graph_txn_t txn = malloc(sizeof(*txn));
 	int r = errno;
 	if(txn){
 		r = db_txn_init((txn_t)txn, (db_t)g, (txn_t)parent, flags);
@@ -2368,19 +2099,6 @@ logID_t graph_snap_id(graph_txn_t txn, logID_t id){
 	return beforeID;
 }
 
-char *__blob(graph_txn_t txn, uint64_t id, size_t *len, int db1){
-	assert(id);
-	buffer_t key = { sizeof(id), &id }, data;
-	int r = db_get((txn_t)txn, db1, &key, &data);
-	assert(DB_SUCCESS == r);
-	if(len)
-		*len = data.size;
-	return data.data;
-}
-
-char *graph_string(graph_txn_t txn, strID_t id, size_t *len){
-	return id ? __blob(txn, id, len, DB_SCALAR) : ((*len = 0), NULL);
-}
 
 int graph_fd(graph_t g){
 	return g->db.fd;

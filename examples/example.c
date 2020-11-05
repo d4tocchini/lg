@@ -2,11 +2,9 @@
 #include<stdlib.h>
 #include<stdio.h>
 #include<errno.h>
-#include <time.h>
-
+#include<time.h>
 #define	O_RDWR		0x0002
 #define	O_CREAT		0x0200
-
 #include "lemongraph.h"
 
 const char * const  path = "./graphs/example";
@@ -26,7 +24,7 @@ int main(int argc, const char *argv[]) {
         db_flags//|DB_NOSYNC|DB_NORDAHEAD
     );
 
-    if (g == NULL        
+    if (g == NULL
         || writable(g)
         || readonly(g)
         || errno)
@@ -36,7 +34,7 @@ int main(int argc, const char *argv[]) {
     }
 
     // graph_sync(g,1);
-    // graph_close(g);// TODO: seg faults
+    graph_close(g);// TODO: seg faults
     return 0;
 }
 

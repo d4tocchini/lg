@@ -601,14 +601,14 @@ void db_close(db_t db){
 	// To fix MacOS `mdb_env_close` seg faulting
 	// int dead;
 	// mdb_reader_check((MDB_env *)db->env, &dead);
-		
-	free(db->handles);
+	// if (db->handles)
+		free(db->handles);
 	mdb_env_close((MDB_env *)db->env);
 	((volatile db_t) db)->env = NULL;
 	pthread_cond_destroy(&db->cond);
 	pthread_mutex_destroy(&db->mutex);
 	if(db->release)
-		free(db);	
+		free(db);
 }
 
 // will fail if this process has active txns/snapshots

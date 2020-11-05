@@ -1,10 +1,7 @@
 #ifndef _LEMONGRAPH_H
 #define _LEMONGRAPH_H
 
-#include<inttypes.h>
-#include<sys/types.h>
-
-#include"db.h"
+#include "lg.h"
 
 // log entry types
 #define GRAPH_DELETION 0x0
@@ -17,29 +14,30 @@
 #define GRAPH_DIR_OUT  0x2
 #define GRAPH_DIR_BOTH 0x3
 
-// kv flags
-#define LG_KV_RO       0x1
-#define LG_KV_MAP_KEYS 0x2
-#define LG_KV_MAP_DATA 0x4
+
 
 #define PRI_LOGID PRIu64
 #define PRI_STRID PRIu64
 
-typedef uint64_t logID_t;
-typedef uint64_t strID_t;
-typedef uint64_t txnID_t;
+// typedef uint64_t logID_t;
+// typedef uint64_t strID_t;
+// typedef uint64_t txnID_t;
 
-typedef struct graph_t * graph_t;
-typedef struct graph_txn_t * graph_txn_t;
-typedef struct graph_iter_t * graph_iter_t;
-
+typedef g_t* graph_t;
+typedef gtxn_t * graph_txn_t;
+typedef giter_t * graph_iter_t;
+typedef gkv_t* kv_t;
+typedef gkv_iter_t* kv_iter_t;
+// typedef struct graph_t * graph_t;
+// typedef struct graph_txn_t * graph_txn_t;
+// typedef struct graph_iter_t * graph_iter_t;
 typedef struct entry_t   * entry_t;
 typedef struct entry_t   * deletion_t;
 typedef struct node_t    * node_t;
 typedef struct edge_t    * edge_t;
 typedef struct prop_t    * prop_t;
-typedef struct kv_t      * kv_t;
-typedef struct kv_iter_t * kv_iter_t;
+// typedef struct kv_t      * kv_t;
+// typedef struct kv_iter_t * kv_iter_t;
 // For deletions, the 'next' field points to the top-level entry that was the target of the delete.
 // As a deletion may cascade to multiple children, I don't think it makes any sense to reserve it for pointing to a future entry.
 
@@ -80,58 +78,28 @@ struct prop_t {
 	strID_t val;
 };
 
-struct graph_t {
-	struct db_t db;
-};
 
-struct graph_txn_t{
-	// everything after 'txn' is copied to a parent txn on commit success
-	struct txn_t txn;
 
-	strID_t next_strID;
-	logID_t next_logID;
-	logID_t begin_nextID;
-	int64_t node_delta;
-	int64_t edge_delta;
 
-	// everything from prev_id down may be copied to a parent txn on commit fail/abort
-	// (iff the parent didn't already have it)
-	txnID_t prev_id;
-	logID_t prev_start;
-	logID_t prev_count;
-	uint64_t prev_nodes;
-	uint64_t prev_edges;
-};
-
-struct graph_iter_t {
-	struct iter_t iter;
-	graph_txn_t txn;
-	logID_t beforeID;
-	graph_iter_t next;
-	int head_active;
-};
-
-#define TXN_DB(txn) ((txn_t)(txn))->db
-#define TXN_RW(txn) ((txn)->txn.rw)
-#define TXN_RO(txn) ((txn)->txn.ro)
-#define TXN_PARENT(txn) ((graph_txn_t)(((txn_t)(txn))->parent))
 
 
 char *graph_strerror(int err);
 
 graph_t graph_open(const char * const path, const int flags, const int mode, int db_flags);
-graph_txn_t graph_txn_begin(graph_t g, graph_txn_t parent, unsigned int flags);
-int graph_txn_updated(graph_txn_t txn);
-int graph_txn_reset(graph_txn_t txn);
-int graph_txn_commit(graph_txn_t txn);
-void graph_txn_abort(graph_txn_t txn);
 int graph_sync(graph_t g, int force);
 int graph_updated(graph_t g);
 size_t graph_size(graph_t g);
 void graph_remap(graph_t g);
-void graph_close(graph_t g);
 int graph_fd(graph_t g);
+void graph_close(graph_t g);
 
+graph_txn_t graph_txn_begin(graph_t g, graph_txn_t parent, unsigned int flags);
+#define 	graph_txn_begin_ro(graph) graph_txn_begin(graph, NULL, DB_RDONLY)
+#define 	graph_txn_begin_rw(graph) graph_txn_begin(graph, NULL, 0)
+int graph_txn_updated(graph_txn_t txn);
+int graph_txn_reset(graph_txn_t txn);
+int graph_txn_commit(graph_txn_t txn);
+void graph_txn_abort(graph_txn_t txn);
 
 db_snapshot_t graph_snapshot_new(graph_t g, int compact);
 int graph_set_mapsize(graph_t g, size_t mapsize);
@@ -179,6 +147,9 @@ edge_t graph_edge_lookup(graph_txn_t txn, node_t src, node_t tgt, void *type, si
 // resolve node/edge
 node_t graph_node_resolve(graph_txn_t txn, void *type, size_t tlen, void *val, size_t vlen);
 edge_t graph_edge_resolve(graph_txn_t txn, node_t src, node_t tgt, void *type, size_t tlen, void *val, size_t vlen);
+
+logID_t node_resolve(graph_txn_t txn, node_t e, strID_t type, strID_t val);
+logID_t edge_resolve(graph_txn_t txn, edge_t e, logID_t src, logID_t tgt, strID_t type, strID_t val);
 
 // resolve ids
 logID_t graph_nodeID_resolve(graph_txn_t txn, strID_t type, strID_t val);
