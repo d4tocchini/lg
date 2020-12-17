@@ -32,9 +32,8 @@ deps-update:
 	@$(MAKE) -C deps --no-print-directory update
 
 test: test.py deps
-	$(PYTHON) test.py
+	$(PYTHON) tests/test.py
 	# CFLAGS="$(PYTHON_CFLAGS)" $(PYTHON) $<
-
 
 install:
 	CFLAGS="$(PYTHON_CFLAGS)" $(PYTHON) setup.py install

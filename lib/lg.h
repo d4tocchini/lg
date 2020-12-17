@@ -470,5 +470,30 @@
         return DB_NOTFOUND;
     }
 
+    // int gkv_del(gkv_t* kv, d_t key)
+    // {
 
+    // }
+
+    // int gkv_put(gkv_t* kv, d_t key, d_t* val)
+    // {
+
+    // }
+
+    // void *kv_first_key(kv_t kv, size_t *klen)
+    // void *kv_last_key(kv_t kv, size_t *klen)
+    // int kv_clear_pfx(kv_t kv, uint8_t *pfx, unsigned int len)
+    // int kv_clear(kv_t kv)
+    // int kv_fifo_push_n(kv_t kv, void **datas, size_t *lens, const int count)
+    // int kv_fifo_push(kv_t kv, void *data, size_t len)
+    // {
+	//     return kv_fifo_push_n(kv, &data, &len, 1);
+    // }
+    // int kv_fifo_peek_n(kv_t kv, void **datas, size_t *lens, const int count)
+    // int kv_fifo_peek(kv_t kv, void **data, size_t *size)
+    // {
+	//     return kv_fifo_peek_n(kv, data, size, 1);
+    // }
+    // int kv_fifo_delete(kv_t kv, const int count)
+    // int kv_fifo_len(kv_t kv, uint64_t *len)
 #endif // ifdef LG_IMPLEMENTATION

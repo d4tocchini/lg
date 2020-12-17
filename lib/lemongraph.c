@@ -766,7 +766,7 @@ void *kv_get(kv_t kv, void *key, size_t klen, size_t *dlen)
 {
 	d_t val;
 	gkv_get(kv, d_buf(key, klen), &val);
-	return val.data; // return NULL;
+	return val.data;
 
 // 	void *data = NULL;
 // 	if (!_kv_setup_key(kv, key, klen, 1))
