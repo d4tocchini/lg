@@ -26,7 +26,7 @@ int commit(graph_txn_t, logID_t*);
 
 #include <ftw.h>
 #include <unistd.h>
-int rmrf(char *);
+// int rmrf(char *);
 
 #define COUNT 1000000
 node_t NODES[COUNT];
@@ -40,21 +40,27 @@ int main(int argc, const char *argv[]) {
 }
 
 void bench() {
-    char name[] = "bench";    
-    char *dir = mkdtemp(dirtmp);    
+    char name[] = "bench";
+    char *dir = mkdtemp(dirtmp);
     char *path = malloc(strlen(dir) + strlen(name) + 2);
     strcpy(path, dir);
     strcat(path, "/");
     strcat(path, name);
     printf("==================\n%s\n",path);
 
-    graph_t g = graph_open(path, O_RDWR|O_CREAT, 0760, DB_NOSYNC|DB_NORDAHEAD);
+    graph_t g = graph_open(path, O_RDWR|O_CREAT, 0760,
+        // DB_NOLOCK // single threaded
+        // DB_WRITEMAP|DB_MAPASYNC // no child txns
+        DB_NOMETASYNC
+        //DB_NOTLS // DB_NOSYNC|DB_NORDAHEAD
+        // http://www.lmdb.tech/doc/group__internal.html#ga52dd98d0c542378370cd6b712ff961b5
+    );
     CATCH_ERRNO
 
     bench_nodes(g);
     bench_props(g);
     bench_edges(g);
-    
+
     graph_close(g);
 
     rmrf(dir);
@@ -64,8 +70,8 @@ void bench() {
         free(NODES[i++]);
 }
 void bench_fast() {
-    char name[] = "bench_fast";    
-    char *dir = mkdtemp(dirtmp);    
+    char name[] = "bench_fast";
+    char *dir = mkdtemp(dirtmp);
     char *path = malloc(strlen(dir) + strlen(name) + 2);
     strcpy(path, dir);
     strcat(path, "/");
@@ -75,14 +81,14 @@ void bench_fast() {
     graph_t g = graph_open(path, O_RDWR|O_CREAT, 0760, DB_NOSYNC|DB_NORDAHEAD);
     CATCH_ERRNO
 
-    bench_nodes_fast(g);    
-    bench_props_fast(g);    
-    bench_edges_fast(g);        
-    
+    bench_nodes_fast(g);
+    bench_props_fast(g);
+    bench_edges_fast(g);
+
     graph_close(g);
 
     rmrf(dir);
-    free(path);    
+    free(path);
 }
 
 #define BENCH_START(name) \
@@ -123,15 +129,15 @@ int bench_edges(graph_t g) {
 int bench_nodes_fast(graph_t g) {
     BENCH_START("nodes")
 
-    // node_t e = malloc(sizeof(*e));    
-    // if (!graph_string_resolve(txn, &e->type, "node",4)) 
-        // exit(1);        
-    strID_t type;    
-    if (!graph_string_resolve(txn, &type, "node",4)) 
-        exit(1);        
-    uint64_t i = 0; while (i < COUNT) {        
+    // node_t e = malloc(sizeof(*e));
+    // if (!graph_string_resolve(txn, &e->type, "node",4))
+        // exit(1);
+    strID_t type;
+    if (!graph_string_resolve(txn, &type, "node",4))
+        exit(1);
+    uint64_t i = 0; while (i < COUNT) {
         // e->val = i;
-        NODE_IDS[i++] = graph_nodeID_resolve(txn, type, i);    
+        NODE_IDS[i++] = graph_nodeID_resolve(txn, type, i);
     }
 	// free(e);
 
@@ -141,11 +147,11 @@ int bench_nodes_fast(graph_t g) {
 int bench_props_fast(graph_t g) {
     BENCH_START("props")
 
-    strID_t key;       
-    if (!graph_string_resolve(txn, &key, "prop",4)) 
-        exit(1);        
-    uint64_t i = 0; while (i < COUNT)         
-        graph_ID_set(txn, NODE_IDS[i++], key, i);        
+    strID_t key;
+    if (!graph_string_resolve(txn, &key, "prop",4))
+        exit(1);
+    uint64_t i = 0; while (i < COUNT)
+        graph_ID_set(txn, NODE_IDS[i++], key, i);
 
     BENCH_FINISH("props")
     return 0;
@@ -153,11 +159,11 @@ int bench_props_fast(graph_t g) {
 int bench_edges_fast(graph_t g) {
     BENCH_START("edges")
 
-    strID_t type;       
-    if (!graph_string_resolve(txn, &type, "edge",4)) 
-        exit(1);             
-    uint64_t i = 0; while (i < COUNT)         
-        graph_edgeID_resolve(txn, NODES[i++], NODES[i++], type, i);    
+    strID_t type;
+    if (!graph_string_resolve(txn, &type, "edge",4))
+        exit(1);
+    uint64_t i = 0; while (i < COUNT)
+        graph_edgeID_resolve(txn, NODES[i++], NODES[i++], type, i);
 
     BENCH_FINISH("edges");
     return 0;
@@ -176,14 +182,14 @@ int commit(graph_txn_t txn, logID_t *logid) {
     return 1;
 }
 
-int _rmrf_cb(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
-    int rv = remove(fpath);
-    if (rv) {
-        perror(fpath);
-    }
-    return rv;
-}
+// int _rmrf_cb(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+//     int rv = remove(fpath);
+//     if (rv) {
+//         perror(fpath);
+//     }
+//     return rv;
+// }
 
-int rmrf(char *path) {
-    return nftw(path, _rmrf_cb, 64, FTW_DEPTH | FTW_PHYS);
-}
+// int rmrf(char *path) {
+//     return nftw(path, _rmrf_cb, 64, FTW_DEPTH | FTW_PHYS);
+// }

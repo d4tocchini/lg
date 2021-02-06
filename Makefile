@@ -1,21 +1,26 @@
 PYTHON=pypy3
 PYTHON_CFLAGS=-O3 -Wall
 CC+=-pipe
-CFLAGS=-fPIC -Wall -Wunused-variable -Wunused-but-set-variable -O3
-LMDB:=deps/lmdb/libraries/liblmdb
-CPPFLAGS+=-I$(LMDB) -Ilib
+# CFLAGS=-fPIC -Wall -Wunused-variable -Wunused-but-set-variable -O3
+
+# LMDB:=deps/lmdb/libraries/liblmdb
+# LMDB_OBJS:=mdb.o midl.o
+# CPPFLAGS+=-I$(LMDB) -Ilib
+LMDB:=
+LMDB_OBJS:=
+CPPFLAGS+=-Ilib
 VPATH=lib:$(LMDB)
 SNAPSHOT:=lg-$(shell date +%Y%m%d)
 
 default: build
 
-liblemongraph.a:  mdb.o midl.o lemongraph.o db.o counter.o afsync.o avl.o
-liblemongraph.so: mdb.o midl.o lemongraph.o db.o counter.o afsync.o avl.o
+liblemongraph.a:  $(LMDB_OBJS) lemongraph.o db.o counter.o afsync.o avl.o
+liblemongraph.so: $(LMDB_OBJS) lemongraph.o db.o counter.o afsync.o avl.o
 liblemongraph.so: LDFLAGS=-pthread
 liblemongraph.so: LDLIBS=-lz
-$(LMDB)/mdb.c:    deps
-$(LMDB)/midl.c:   deps
-db.o:             deps
+# $(LMDB)/mdb.c:    deps
+# $(LMDB)/midl.c:   deps
+# db.o:             deps
 
 clean:
 	@find . -type d \( -name __pycache__ -o -name .eggs -o -name build -o -name dist -o -name \*.egg-info \) -exec rm -rf {} \; -print -prune
@@ -66,14 +71,17 @@ examples/example: liblemongraph.a examples/example.c
 	@$(CC) $(CFLAGS) $(CPPFLAGS) -lz -pthread -L. -llemongraph \
 		examples/example.c -o examples/example
 
+
 bench/bench: liblemongraph.a bench/bench.c
 	@$(CC) $(CFLAGS) $(CPPFLAGS) -lz -pthread -L. -llemongraph \
 		bench/bench.c -o bench/bench
 
 build-examples: examples/example
 build-bench: bench/bench
-build: build-examples build-bench
+build-python:
 	CFLAGS="$(PYTHON_CFLAGS)" $(PYTHON) setup.py build
+build: liblemongraph.a
+
 
 .PHONY: run-example.c run-example.py run-bench.c run-bench.py
 

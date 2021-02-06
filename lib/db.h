@@ -5,39 +5,152 @@
 #define _BSD_SOURCE
 #endif
 
-#include<stddef.h>
-#include<pthread.h>
+#include <stddef.h>
+#include <pthread.h>
 
 // status codes
 #define DB_SUCCESS 0
 #define DB_NOTFOUND (-30798)
 
 // env/txn flags
-#define DB_FIXEDMAP    0x0000001
-#define DB_NOSYNC      0x0010000
+#define DB_FIXEDMAP    0x0000001 /** mmap at a fixed address (experimental) */
+// *      	use a fixed address for the mmap region. This flag must be specified
+// *      	when creating the environment, and is stored persistently in the environment.
+// *		If successful, the memory map will always reside at the same virtual address
+// *		and pointers used to reference data items in the database will be constant
+// *		across multiple invocations. This option may not always work, depending on
+// *		how the operating system has allocated memory to shared libraries and other uses.
+// *		The feature is highly experimental.
+#define DB_NOSYNC      0x0010000 /** don't fsync after commit */
+// *		Don't flush system buffers to disk when committing a transaction.
+// *		This optimization means a system crash can corrupt the database or
+// *		lose the last transactions if buffers are not yet flushed to disk.
+// *		The risk is governed by how often the system flushes dirty buffers
+// *		to disk and how often #mdb_env_sync() is called.  However, if the
+// *		filesystem preserves write order and the #MDB_WRITEMAP flag is not
+// *		used, transactions exhibit ACI (atomicity, consistency, isolation)
+// *		properties and only lose D (durability).  I.e. database integrity
+// *		is maintained, but a system crash may undo the final transactions.
+// *		Note that (#MDB_NOSYNC | #MDB_WRITEMAP) leaves the system with no
+// *		hint for when to write transactions to disk, unless #mdb_env_sync()
+// *		is called. (#MDB_MAPASYNC | #MDB_WRITEMAP) may be preferable.
+// *		This flag may be changed at any time using #mdb_env_set_flags().
 #define DB_RDONLY      0x0020000
-#define DB_NOMETASYNC  0x0040000
+// *		Open the environment in read-only mode. No write operations will be
+// *		allowed. LMDB will still modify the lock file - except on read-only
+// *		filesystems, where LMDB does not use locks.
+#define DB_NOMETASYNC  0x0040000 /** don't fsync metapage after commit */
+// *		Flush system buffers to disk only once per transaction, omit the
+// *		metadata flush. Defer that until the system flushes files to disk,
+// *		or next non-MDB_RDONLY commit or #mdb_env_sync(). This optimization
+// *		maintains database integrity, but a system crash may undo the last
+// *		committed transaction. I.e. it preserves the ACI (atomicity,
+// *		consistency, isolation) but not D (durability) database property.
+// *		This flag may be changed at any time using #mdb_env_set_flags().
 #define DB_WRITEMAP    0x0080000
+// *		Use a writeable memory map unless MDB_RDONLY is set. This uses
+// 	*		fewer mallocs but loses protection from application bugs
+// 	*		like wild pointer writes and other bad updates into the database.
+// 	*		This may be slightly faster for DBs that fit entirely in RAM, but
+// 	*		is slower for DBs larger than RAM.
+// 	*		Incompatible with nested transactions.
+// 	*		Do not mix processes with and without MDB_WRITEMAP on the same
+// 	*		environment.  This can defeat durability (#mdb_env_sync etc).
 #define DB_MAPASYNC    0x0100000
+// *		When using #MDB_WRITEMAP, use asynchronous flushes to disk.
+// *		As with #MDB_NOSYNC, a system crash can then corrupt the
+// *		database or lose the last transactions. Calling #mdb_env_sync()
+// *		ensures on-disk database integrity until next commit.
+// *		This flag may be changed at any time using #mdb_env_set_flags().
 #define DB_NOTLS       0x0200000
+// *		Don't use Thread-Local Storage. Tie reader locktable slots to
+// *		#MDB_txn objects instead of to threads. I.e. #mdb_txn_reset() keeps
+// *		the slot reseved for the #MDB_txn object. A thread may use parallel
+// *		read-only transactions. A read-only transaction may span threads if
+// *		the user synchronizes its use. Applications that multiplex many
+// *		user threads over individual OS threads need this option. Such an
+// *		application must also serialize the write transactions in an OS
+// *		thread, since LMDB's write locking is unaware of the user threads.
 #define DB_NOLOCK      0x0400000
+// *		Don't do any locking. If concurrent access is anticipated, the
+// *		caller must manage all concurrency itself. For proper operation
+// *		the caller must enforce single-writer semantics, and must ensure
+// *		that no readers are using old transactions while a writer is
+// *		active. The simplest approach is to use an exclusive lock so that
+// *		no readers may be active at all when a writer begins.
 #define DB_NORDAHEAD   0x0800000
+// * 		Turn off readahead. It's harmful when the DB is larger than RAM.
+// *		Turn off readahead. Most operating systems perform readahead on
+// *		read requests by default. This option turns it off if the OS
+// *		supports it. Turning it off may help random read performance
+// *		when the DB is larger than RAM and system RAM is full.
+// *		The option is not implemented on Windows.
 #define DB_NOMEMINIT   0x1000000
+// *		Don't initialize malloc'd memory before writing to unused spaces
+// *		in the data file. By default, memory for pages written to the data
+// *		file is obtained using malloc. While these pages may be reused in
+// *		subsequent transactions, freshly malloc'd pages will be initialized
+// *		to zeroes before use. This avoids persisting leftover data from other
+// *		code (that used the heap and subsequently freed the memory) into the
+// *		data file. Note that many other system libraries may allocate
+// *		and free memory from the heap for arbitrary uses. E.g., stdio may
+// *		use the heap for file I/O buffers. This initialization step has a
+// *		modest performance cost so some applications may want to disable
+// *		it using this flag. This option can be a problem for applications
+// *		which handle sensitive data like passwords, and it makes memory
+// *		checkers like Valgrind noisy. This flag is not needed with #MDB_WRITEMAP,
+// *		which writes directly to the mmap instead of using malloc for pages. The
+// *		initialization is also skipped if #MDB_RESERVE is used; the
+// *		caller is expected to overwrite all of the memory that was
+// *		reserved in that case.
+// *		This flag may be changed at any time using #mdb_env_set_flags().
 #define DB_PREVMETA    0x2000000
+// *		Open the environment with the previous snapshot rather than the latest
+// *		one. This loses the latest transaction, but may help work around some
+// *		types of corruption. If opened with write access, this must be the
+// *		only process using the environment. This flag is automatically reset
+// *		after a write transaction is successfully committed.
 
 // db flags
 #define DB_REVERSEKEY  0x00002
+// *		Keys are strings to be compared in reverse order, from the end
+// *		of the strings to the beginning. By default, Keys are treated as strings and
+// *		compared from beginning to end.
 #define DB_DUPSORT     0x00004
+// *		Duplicate keys may be used in the database. (Or, from another perspective,
+// *		keys may have multiple data items, stored in sorted order.) By default
+// *		keys must be unique and may have only a single data item.
 #define DB_INTEGERKEY  0x00008
+// *		Keys are binary integers in native byte order, either unsigned int
+// *		or #mdb_size_t, and will be sorted as such.
+// *		(lmdb expects 32-bit int <= size_t <= 32/64-bit mdb_size_t.)
+// *		The keys must all be of the same size.
 #define DB_DUPFIXED    0x00010
+// *		This flag may only be used in combination with #MDB_DUPSORT. This option
+// *		tells the library that the data items for this database are all the same
+// *		size, which allows further optimizations in storage and retrieval. When
+// *		all data items are the same size, the #MDB_GET_MULTIPLE, #MDB_NEXT_MULTIPLE
+// *		and #MDB_PREV_MULTIPLE cursor operations may be used to retrieve multiple
+// *		items at once.
 #define DB_INTEGERDUP  0x00020
+// *		This option specifies that duplicate data items are binary integers,
+// *		similar to #MDB_INTEGERKEY keys.
 #define DB_REVERSEDUP  0x00040
+// *		This option specifies that duplicate data items should be compared as
+// *		strings in reverse order.
 #define DB_CREATE      0x40000
+// *		Create the named database if it doesn't exist. This option is not
+// *		allowed in a read-only transaction or a read-only environment.
 
 // write flags
 #define DB_NOOVERWRITE 0x00010
+// * 		For put: Don't write if the key already exists.
 #define DB_NODUPDATA   0x00020
+// 		Only for #DB_DUPSORT:
+// * 			For put: don't write if the key and data pair already exist.
+// * 			For mdb_cursor_del: remove all duplicate data items.
 #define DB_CURRENT     0x00040
+// * 		For mdb_cursor_put: overwrite the current key/data pair
 #define DB_RESERVE     0x10000
 #define DB_APPEND      0x20000
 #define DB_APPENDDUP   0x40000
@@ -145,6 +258,22 @@ int db_updated(db_t db);
 void db_close(db_t db);
 int db_size(db_t db, size_t *size);
 int db_remap(db_t db);
+
+	/** @brief Return the path that was used in #mdb_env_open().
+	 *
+	 * @param[in] db An environment handle returned by #mdb_env_create()
+	 * @param[out] path Address of a string pointer to contain the path. This
+	 * is the actual string in the environment, not a copy. It should not be
+	 * altered in any way.
+	 * @return A non-zero error value on failure and 0 on success. Some possible
+	 * errors are:
+	 * <ul>
+	 *	<li>EINVAL - an invalid parameter was specified.
+	 * </ul>
+	 */
+int db_get_path(db_t db, const char **path);
+// #define db_get_path(db, path_pp) mdb_env_get_path((MDB_env *)(( (db_t)db )->env), path)
+
 
 // will fail if this process has active txns/snapshots
 // supplied mapsize must be a multiple of the OS pagesize

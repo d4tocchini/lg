@@ -1,97 +1,359 @@
 #ifndef _LG_HEADER
-    #define _LG_HEADER
+#define _LG_HEADER
 
-    #include <string.h>
-    #include <inttypes.h>
-    #include <sys/types.h>
-    #include "db.h"
+#include "std.h"
+#include "db.h"
 
-    // data
-    typedef uint64_t    d_id_t;
-    typedef d_id_t      logID_t;
-    typedef d_id_t      strID_t;
-    typedef d_id_t      txnID_t;
-    #define             d_size_t     size_t
-    #define             d_data_t     void*
-    typedef struct d_t {
-        d_size_t    size;   // size of the data item
-        d_data_t    data;   // address of the data item
-        d_id_t 	    id;
-    } d_t;
-    #define d_id(x) 	    ((d_t){ .id=(d_id_t)(x) })
-    #define d_buf(x, sz) 	((d_t){ .data=(d_data_t)(x), .size=(d_size_t)(sz) })
-    #define _d_str(x)       d_buf(x, strlen(x))
-    #define d_str(x)        _d_str((x))
+#define DBS (sizeof(DB_INFO)/sizeof(*DB_INFO))
+#define DB_LOG          0
+#define DB_KEY          1
+#define DB_KEY_IDX      2
+#define DB_SCALAR       3
+#define DB_SCALAR_IDX   4
+#define DB_NODE_IDX     5
+#define DB_EDGE_IDX     6
+#define DB_PROP_IDX     7
+#define DB_SRCNODE_IDX  8
+#define DB_TGTNODE_IDX  9
+#define DB_KV          10
+#define DB_KVBM        11
+#define DB_TXNLOG      12
+
+// data
+// typedef uint32_t    LG_id;
+typedef uint64_t    LG_id;
+typedef size_t    LG_size;
+typedef LG_id       LG_str;
+typedef LG_id       LG_log;
+typedef LG_id       LG_blob;
+typedef LG_log      LG_node;
+typedef LG_log      LG_edge;
+typedef LG_log      LG_prop;
+// typedef LG_id       LG_txn
+// TODO:
+typedef LG_id    pod_id_t;
+typedef LG_id    logID_t;
+typedef LG_id    strID_t;
+typedef LG_id    txnID_t;
+
+typedef struct
+LG_Blob {
+    LG_blob id;
+    union {
+        buffer_t buffer;
+        struct {
+            LG_size size;
+            void*   data;
+        };
+        struct {
+            LG_size len;
+            char*   string;
+        };
+    };
+} LG_Blob;
+
+typedef struct
+pod_t {
+    #define  pod_size_t     LG_size
+    #define pod_data_t     void*
+    pod_size_t    size;   // size of the data item
+    pod_data_t    data;   // address of the data item
+    pod_id_t 	    id;
+} pod_t;
 
 
-    // graph db
-    typedef struct g_t {
-        struct db_t db;
-    } g_t;
+#define pod_num(x) 	    ((pod_t){ .id=(pod_id_t)(x) })
+#define pod_buf(x, sz) 	((pod_t){ .data=(pod_data_t)(x), .size=(pod_size_t)(sz) })
+#define _pod_str(x)       pod_buf(x, strlen(x))
+#define pod_str(x)        _pod_str((x))
 
+#define ggstr           pod_str;
+#define ggbuf           pod_buf;
 
-    // graph transaction
-
+typedef struct
+ggtxn_t {
     // status codes
     // #define G_NOTFOUND  DB_NOTFOUND
     // #define G_SUCCESS   DB_SUCCESS
+// everything after 'txn' is copied to a parent txn on commit success
+    struct txn_t txn;
+    LG_str next_strID;
+    LG_log next_logID;
+    LG_log begin_nextID;
+    int64_t node_delta;
+    int64_t edge_delta;
+// everything from prev_id down may be copied to a parent txn on commit fail/abort
+// (if the parent didn't already have it)
+// NOTE: prev_* fields are only valid if prev_start is non-zero
+    txnID_t prev_id;
+    LG_log prev_start;
+    LG_log prev_count;
+    uint64_t prev_nodes;
+    uint64_t prev_edges;
+} ggtxn_t;
 
-    typedef struct gtxn_t {
-    // everything after 'txn' is copied to a parent txn on commit success
-        struct txn_t txn;
-        strID_t next_strID;
-        logID_t next_logID;
-        logID_t begin_nextID;
-        int64_t node_delta;
-        int64_t edge_delta;
-    // everything from prev_id down may be copied to a parent txn on commit fail/abort
-    // (if the parent didn't already have it)
-        txnID_t prev_id;
-        logID_t prev_start;
-        logID_t prev_count;
-        uint64_t prev_nodes;
-        uint64_t prev_edges;
-    } gtxn_t;
-    #define TXN_DB(txn) ((txn_t)(txn))->db
-    #define TXN_RW(txn) ((txn)->txn.rw)
-    #define TXN_RO(txn) ((txn)->txn.ro)
-    #define TXN_PARENT(txn) ((gtxn_t*)(((txn_t)(txn))->parent))
-
-    typedef struct giter_t {
-        struct iter_t iter;
-        gtxn_t* txn;
-        logID_t beforeID;
-        struct giter_t* next;
-        int head_active;
-    } giter_t;
-
-    // graph key-val storage
-
-    // kv flags
-    #define LG_KV_RO       0x1
-    #define LG_KV_MAP_KEYS 0x2
-    #define LG_KV_MAP_DATA 0x4
-
-    typedef struct gkv_t {
-        gtxn_t* txn;
-        buffer_t key, val;
-        int flags;
-        unsigned int refs, klen;
-        uint8_t kbuf[511];
-    } gkv_t;
-
-    typedef struct gkv_iter_t {
-        struct iter_t iter;
-        gkv_t* kv;
-    } gkv_iter_t;
+#define TXN_DB(txn) ((txn_t)(txn))->db
+#define TXN_RW(txn) ((txn)->txn.rw)
+#define TXN_RO(txn) ((txn)->txn.ro)
+#define TXN_PARENT(txn) ((ggtxn_t*)(((txn_t)(txn))->parent))
 
 
-    int d_resolve(gtxn_t* txn, d_t* d, int readonly);
+LG_id ggdb_next_id(ggtxn_t* txn, const int consume, LG_id * const cache, const int db1, const int venc);
+int pod_resolve(ggtxn_t* txn, pod_t* d, int readonly);
+char* graph_string(ggtxn_t* txn, LG_str id, size_t *len);
+static INLINE int ggblob_resolve(ggtxn_t* txn, LG_str *ret, void const *data, const size_t len, int readonly);
+static INLINE char* graph_string_enc(ggtxn_t* txn, void *id_enc, size_t *slen);
+static INLINE int ggdb_resolve_blob(ggtxn_t* txn, LG_id *ret, char const *data, const size_t len, const int readonly, LG_id * const cache, int db1, int db2);
+    // TODO: ugh, returns 1 for success, 0 for failure (only for readonly)
 
-    void gkv_init(gtxn_t* txn, gkv_t* kv, d_t domain, const int flags);
-    int gkv_get(gkv_t* kv, d_t key, d_t* val);
 
 
+// edge directions
+#define GRAPH_DIR_IN   0x1
+#define GRAPH_DIR_OUT  0x2
+#define GRAPH_DIR_BOTH 0x3
+
+// log entry types
+#define GRAPH_DELETION 0x0
+#define GRAPH_NODE     0x1
+#define GRAPH_EDGE     0x2
+#define GRAPH_PROP     0x3
+
+// max log entry size is for edge_t
+#define LOG_MAX_BUF_SIZE (1 + esizeof(LG_str) * 2 + esizeof(LG_log) * 3)
+
+// For deletions, the 'next' field points to the top-level entry that was the target of the delete.
+// As a deletion may cascade to multiple children, I don't think it makes any sense to reserve it for pointing to a future entry.
+
+typedef struct
+ggentry_t {
+    LG_log id;
+    uint8_t is_new:1;
+    uint8_t rectype:7;
+    LG_log next;
+} ggentry_t;
+
+typedef struct
+ggnode_t {
+    LG_log id;
+    uint8_t is_new:1;
+    uint8_t rectype:7;
+    LG_log next;
+    LG_str type;
+    LG_str val;
+} ggnode_t;
+
+typedef struct
+ggedge_t {
+    LG_log id;
+    uint8_t is_new:1;
+    uint8_t rectype:7;
+    LG_log next;
+    LG_str type;
+    LG_str val;
+    LG_log src;
+    LG_log tgt;
+} ggedge_t;
+
+typedef struct
+ggprop_t {
+    LG_log id;
+    uint8_t is_new:1;
+    uint8_t rectype:7;
+    LG_log next;
+    LG_log pid;
+    LG_str key;
+    LG_str val;
+} ggprop_t;
+
+typedef struct
+ggiter_t {
+    struct iter_t iter;
+    ggtxn_t* txn;
+    LG_log beforeID;
+    struct ggiter_t* next;
+    int head_active;
+} ggiter_t;
+
+//
+
+typedef struct
+pool_t {
+    heap_t* heap;
+    int count;
+    int stride;
+} pool_t;
+
+// pool_
+
+
+// graph
+
+typedef struct
+ggraph_t {
+    struct db_t db;
+} ggraph_t;
+
+
+// context
+
+typedef struct
+ggctx_t {
+    #ifndef GGtxnc
+        #define GGtxnc 8
+    #endif
+    #ifndef GGnodec
+        #define GGnodec 8
+    #endif
+    #ifndef GGedgec
+        #define GGedgec 8
+    #endif
+    #ifndef GGgraphc
+        #define GGgraphc 8
+    #endif
+
+    ggraph_t root;
+    pool_t graph_pool;
+
+    ggtxn_t txns[GGtxnc];
+    int txni;
+    int txnc;
+    ggnode_t nodes[GGnodec];
+    int nodei;
+    int nodec;
+    ggedge_t edge[GGedgec];
+    int edgei;
+    int edgec;
+    ggraph_t graphs[GGgraphc];
+    int graphi;
+    int graphc;
+
+    int pid;
+    int basepath_len;
+    char basepath[256];
+} ggctx_t;
+
+ggctx_t ggctx;
+
+int     lg_init(const char* path);
+int     lg_open(ggraph_t* g, const char * const subpath, const int flags);
+void    lg_close(ggraph_t* g);
+int     lg_rm(ggraph_t* g);
+// lg_mktemp
+// lg_exists
+
+#define LG_txn ggtxn_t
+#define LG_Node ggnode_t
+#define LG_Edge ggedge_t
+#define LG_Prop ggprop_t
+#define LG_Iter ggiter_t
+
+// #define lg_Node(ref, id)                        lg_node_hydrate(txn, ref,  0, 0)
+// #define lg_Edge(ref, id)                        lg_edge_hydrate(txn, ref,  0, 0)
+// #define lg_Prop(ref, id)                        lg_prop_hydrate(txn, ref,  0, 0)
+
+#define Node_(ref)        lg_node_hydrate(txn, ref,  0, 0)
+#define Edge_(ref)        lg_edge_hydrate(txn, ref,  0, 0)
+#define Prop_(ref)        lg_prop_hydrate(txn, ref,  0, 0)
+#define Blob_(ref)        lg_blob_hydrate(txn, ref,     0)
+#define Node_b4_(ref, b4) lg_node_hydrate(txn, ref, b4, 1)
+#define Edge_b4_(ref, b4) lg_edge_hydrate(txn, ref, b4, 1)
+#define Prop_b4_(ref)     lg_prop_hydrate(txn, ref, b4, 1)
+#define Blob_ro_(ref)     lg_blob_hydrate(txn, ref,     1)
+
+#define node_(type, val)                  lg_node_resolve(txn, type, val,  0, 0)
+#define node_ro_(type, val)               lg_node_resolve(txn, type, val,  0, 1)
+#define node_b4_(type, val, b4)           lg_node_resolve(txn, type, val, b4, 1)
+#define edge_(src, tgt, type, val)        lg_edge_resolve(txn, src, tgt, type, val,  0, 0)
+#define edge_ro_(src, tgt, type, val)     lg_edge_resolve(txn, src, tgt, type, val,  0, 1)
+#define edge_b4_(src, tgt, type, val, b4) lg_edge_resolve(txn, src, tgt, type, val, b4, 1)
+#define set_(pid, key, val)               lg_prop_resolve(txn, pid, key, val,  0, 0)
+#define get_(pid, key)                    lg_prop_resolve(txn, pid, key,   0,  0, 1)
+#define get_b4_(pid, key, b4)             lg_prop_resolve(txn, pid, key,   0, b4, 1)
+#define blob_(dat, len)                   lg_blob_resolve(txn, dat, len, 0)
+#define blob_ro_(dat, len)                lg_blob_resolve(txn, dat, len, 1)
+#define str_(str)                         lg_blob_resolve(txn, str, strlen(str), 0)
+#define str_ro_(str)                      lg_blob_resolve(txn, str, strlen(str), 1)
+
+#define node_read_(id, ref)   lg_node_read(txn, id, ref)
+#define edge_read_(id, ref)   lg_edge_read(txn, id, ref)
+#define prop_read_(id, ref)   lg_prop_read(txn, id, ref)
+#define blob_read_(id, ref)   lg_blob_read(txn, id, ref)
+
+int     lg_node_hydrate(LG_txn* txn, LG_Node* ref, LG_log b4, int ro);
+int     lg_edge_hydrate(LG_txn* txn, LG_Edge* ref, LG_log b4, int ro);
+int     lg_prop_hydrate(LG_txn* txn, LG_Prop* ref, LG_log b4, int ro);
+int     lg_blob_hydrate(LG_txn* txn, LG_Blob* ref, int ro);
+
+LG_node lg_node_resolve(LG_txn* txn, LG_id type, LG_id val,                            LG_log b4, int ro);
+LG_edge lg_edge_resolve(LG_txn* txn, LG_node src, LG_node tgt, LG_id type, LG_id val,  LG_log b4, int ro);
+LG_prop lg_prop_resolve(LG_txn* txn, LG_id pid, LG_id key, LG_id val,                  LG_log b4, int ro);
+LG_blob lg_blob_resolve(LG_txn* txn, void const *data, const size_t size,                         int ro);
+
+int     lg_log_read(LG_txn* txn, const LG_log id, buffer_t* val);
+int     lg_node_read(LG_txn* txn, const LG_node id, LG_Node* ref);
+int     lg_edge_read(LG_txn* txn, const LG_edge id, LG_Edge* ref);
+int     lg_prop_read(LG_txn* txn, const LG_prop id, LG_Prop* ref);
+int     lg_blob_read(LG_txn* txn, const LG_blob id, LG_Blob* ref);
+
+LG_Iter* lg_idx_iter_new(LG_txn* txn, int dbi, LG_log id, LG_log b4);
+LG_Iter* lg_iter_concat(unsigned int count, ...);
+void     lg_iter_close(LG_Iter* gi);
+LG_id    lg_iter_next_id(LG_Iter* gi);
+
+
+int ggraph_open(ggraph_t* g, const char * const path, const int flags, const int mode, const int db_flags);
+
+int ggtxn_begin(ggtxn_t* txn, ggraph_t* g, unsigned int flags);
+int ggtxn_begin_child(ggtxn_t* txn, ggraph_t* g, ggtxn_t* parent, unsigned int flags);
+int ggtxn_commit(ggtxn_t* txn);
+void ggtxn_abort(ggtxn_t* txn);
+
+#define LG_WRITE(graph, CODE) \
+do { \
+    ggtxn_t txn_d; \
+    ggtxn_t* txn = &txn_d; \
+    ggtxn_begin(txn, graph, 0); \
+    CODE \
+    LG_COMMIT \
+} while (0);
+
+#define LG_READ(graph, CODE) \
+do { \
+    ggtxn_t txn_d; \
+    ggtxn_t* txn = &txn_d; \
+    ggtxn_begin(txn, graph, DB_RDONLY); \
+    CODE \
+    LG_ABORT \
+} while (0);
+
+#define LG_COMMIT \
+    ggtxn_commit(txn); \
+    break;
+#define LG_ABORT \
+    ggtxn_abort(txn); \
+    break;
+
+#define log_next_() \
+    ggdb_next_id(txn, 0, &txn->next_logID, DB_LOG, 1)
+
+
+// #define gglog_consume() \
+//     ggdb_next_id(txn, 1, &txn->next_logID, DB_LOG, 1)
+
+    // #define ggWRITE(CODE) \
+    // do { \
+    //     ggtxn_t* txn = ggtxn_begin(graph, NULL, 0); \
+    //     ggtxn_push(txn);
+    //     CODE \
+    // } while (0);
+
+    // #define gCOMMIT() \
+    //     ggtxn_commit(txn); \
+    //     ggtxn_pop(txn); \
+    //     break;
+
+    // #define ggABORT()
 
     /*
 
@@ -104,396 +366,829 @@
     }
 
     */
+
+#define GG_PRINT_ERRNO() fprintf(stderr, "lg error: %s\n", db_strerror(errno));
+
 #endif
+
 
 // ============================================================================
 #ifdef LG_IMPLEMENTATION
 
+#include <unistd.h>
+    // getpid
+    // pid_t is int32, uid_t and gid_t are uint32
 
-    #define INLINE __attribute__((always_inline)) inline
+#define INCLUDE_SOURCE
+#include "c4/fs.h"
 
-    #define MAX(x, y) ((x) > (y) ? (x) : (y))
+#include "serdes.h"
+#include "ggdb.c"
+#include "ggkv.c"
 
-    // max log entry size is for edge_t
-    #define MAX_LOGBUF (1 + esizeof(strID_t) * 2 + esizeof(logID_t) * 3)
+static INLINE int       _lg_init_basepath(const char *argv0);
+static INLINE LG_log    _lg_log_append(LG_txn* txn, buffer_t* log_buf, LG_log delID);
+static INLINE void      __lg_log_append_deletion(LG_txn* txn, const LG_log newrecID, const LG_log oldrecID, uint8_t *mem);
+static INLINE LG_log    _lg_iter_next_id(ggiter_t* iter);
+static INLINE LG_log    __lg_iter_blarf_id(ggiter_t* iter);
+typedef enum
+ggerr_t {
+    // https://github.com/criptych/physfs/blob/1646de2459cab42fb9e2f06a70b50148e80b3f4c/src/physfs.h#L3395
+    GGERR_OK,               /**< Success; no error.                    */
+    GGERROR,
+    GGERR_OUT_OF_MEMORY,
+    GGERR_INVALID_ARG,
+    GGERR_INVALID_BASEPATH
+} ggerr_t;
 
-    //#define debug(args...) do{ fprintf(stderr, "%d: ", __LINE__); fprintf(stderr, args); }while(0)
-    //#define debug(args...) while(0);
+// PHYSFS_setErrorCode https://github.com/criptych/physfs/blob/1646de2459cab42fb9e2f06a70b50148e80b3f4c/src/physfs.c#L756
 
-    // provide type-agnostic clz wrapper, and return a more useful value for clz(0)
-    #define __clz_wrapper(x) (unsigned int)((x) ? (sizeof(x) == sizeof(long) ? (unsigned)__builtin_clzl(x) : (sizeof(x) == sizeof(long long) ? (unsigned)__builtin_clzll(x) : (unsigned)__builtin_clz((int)(x)))) : sizeof(x) * 8)
+void _lg_set_errcode(ggerr_t err)
+{
+    // TODO:
+    GG_PRINT_ERRNO()
+}
 
-    // quickly take unsigned numeric types and count minimum number of bytes needed to represent - for varint encoding
-    #define intbytes(x) (sizeof(x) - __clz_wrapper(x) / 8)
+#define GG_BAIL(errcode, ret) \
+{ \
+        _lg_set_errcode(errcode); \
+        return ret; \
+}
 
-    // encode unsigned values into buffer, advancing iter
-    // ensure you have a least 9 bytes per call
-    #define encode(x, buffer, iter) do{ \
-        int _shift; \
-        ((uint8_t *)(buffer))[iter] = intbytes(x); \
-        for (_shift = (((uint8_t *)(buffer))[iter++] - 1) * 8; _shift >= 0; iter++, _shift -= 8) \
-            ((uint8_t *)(buffer))[iter] = ((x) >> _shift) & 0xff; \
-    } while (0)
+#define GG_BAIL_IF(cond, errcode, ret) \
+    if (cond) GG_BAIL((errcode), (ret))
 
-    // corresponding decode
-    #define decode(x, buffer, iter) do{ \
-        uint8_t _count = ((uint8_t *)(buffer))[iter++]; \
-        assert(sizeof(x) >= _count); \
-        x = 0; \
-        while(_count--) \
-            x = (x<<8) + ((uint8_t *)(buffer))[iter++]; \
-    }while(0)
+#define GG_PATH_SEP '/'
 
-    #define enclen(buffer, offset) (1 + ((uint8_t *)(buffer))[offset])
-
-    #define esizeof(x) (sizeof(x)+1)
-
-    #define DBS (sizeof(DB_INFO)/sizeof(*DB_INFO))
-    #define DB_LOG          0
-    #define DB_KEY          1
-    #define DB_KEY_IDX      2
-    #define DB_SCALAR       3
-    #define DB_SCALAR_IDX   4
-    #define DB_NODE_IDX     5
-    #define DB_EDGE_IDX     6
-    #define DB_PROP_IDX     7
-    #define DB_SRCNODE_IDX  8
-    #define DB_TGTNODE_IDX  9
-    #define DB_KV          10
-    #define DB_KVBM        11
-    #define DB_TXNLOG      12
-
-    // here's the deal - the actual key in the db is comprised of 3 serialized uints:
-    //	txnID: incrementing sequence of transaction numbers, starting at 1
-    //	       each write txn that caused the log to grow will get it's own txnID
-    //	start: first logID in the txn, will be >= 1
-    //	count: number of logIDs accumulated in the txn, will be >= 1
-    //
-    // when this function is called, at least one of the params will be an actual key as above
-    // if the txnID for the other decodes to zero, then it is a query operation. Decoding the second uint determines
-    //	whether the 3rd uint should be tested against (0) the txnID or (non-zero) the start/count range
-    //
-    // with one btree, this lets us quickly:
-    //	map txnID to logID range
-    //	map logID to containing txnID
-    static int magic_txnlog_cmp(const buffer_t *a, const buffer_t *b)
+int
+lg_init(const char* path)
+{
+    const ggraph_t* graph;
+    LG_txn txn;
+    // gg = lg_malloc(sizeof(lg_t));
+    // GG_BAIL_IF(
+    //     gg == NULL, GGERR_OUT_OF_MEMORY, GGERR_OUT_OF_MEMORY)
+    GG_BAIL_IF(
+        _lg_init_basepath(path)
+    , GGERR_INVALID_BASEPATH, GGERR_INVALID_BASEPATH)
+    // open root graph
     {
-        int ia = 0, ib = 0;
-        txnID_t ta, tb;
-        decode(ta, a->data, ia);
-        decode(tb, b->data, ib);
-        if(!ta){
-            assert(tb);
-            // a is query, b is actual key in db
-            decode(ta, a->data, ia);
-            if(ta){
-                decode(ta, a->data, ia);
-                uint64_t start, count;
-                decode(start, b->data, ib);
-                if(ta < start)
-                    return -1;
-                decode(count, b->data, ib);
-                return ta >= (start + count);
-            }
-            // txnID query
-            decode(ta, a->data, ia);
-        }else if(!tb){
-            // I don't believe this happens today, but just in case ...
-            return - magic_txnlog_cmp(b, a);
+        graph = &ggctx.root;
+        const int os_flags = O_RDWR | O_CREAT;
+        const int mode = 0760;
+        const int db_flags = 0;
+        ggraph_open(graph, path, os_flags, mode, db_flags);
+        if (graph == NULL) {
+            GG_PRINT_ERRNO()
+            return 1;
         }
-        return ta < tb ? -1 : ta > tb ? 1 : 0;
     }
-
-    static dbi_t DB_INFO[] = {
-        // strID_t strID => bytes (append-only)
-        [DB_SCALAR] = { "scalar", DB_INTEGERKEY, NULL },
-
-        // uint32_t crc => strID_t strIDs[]
-        [DB_SCALAR_IDX] = { "scalar_idx", DB_DUPSORT|DB_INTEGERKEY|DB_DUPFIXED|DB_INTEGERDUP, NULL },
-
-        // varint_t logID => entry_t (appends & updates)
-        [DB_LOG] = { "log", 0, NULL },
-
-        // varint_t [type, val, logID] => ''
-        [DB_NODE_IDX] = { "node_idx", 0, NULL },
-
-        // varint_t [type, val, src, tgt, logID]
-        [DB_EDGE_IDX] = { "edge_idx", 0, NULL },
-
-        // varint_t pid, key, logID => ''
-        [DB_PROP_IDX] = { "prop_idx", 0, NULL },
-
-        // varint_t node, type, edge => ''
-        [DB_SRCNODE_IDX] = { "srcnode_idx", 0, NULL },
-
-        // varint_t node, type, edge => ''
-        [DB_TGTNODE_IDX] = { "tgtnode_idx", 0, NULL },
-
-        // varint_t domain, key => varint_t val
-        [DB_KV] = { "kv", 0, NULL },
-
-        // varint_t domain, key => varint_t val
-        [DB_KVBM] = { "kvbm", 0, NULL },
-
-        // varint_t [txnID, start, count] => varint_t [node_count, edge_count] (append only)
-        [DB_TXNLOG] = { "txnlog", 0, magic_txnlog_cmp }
-    };
-
-
-    // return 0 on error
-    static INLINE uint64_t _nextID(gtxn_t* txn, const int consume, uint64_t * const cache, const int db1, const int venc){
-        if(consume && TXN_RO(txn)){
-            errno = EINVAL;
-            return 0;
+    // setup & clear kv for current pid
+    ggkv_t proc_kv;
+    pod_t proc_domain = pod_str("proc");
+    int pid = getpid();
+    ggctx.pid = pid;
+    {
+        if UNLIKELY(ggtxn_begin(&txn, graph, 0)) {
+            GG_PRINT_ERRNO()
+            return 1;
         }
+        // pod_num(~((pod_id_t)pid)), 0);
+        pod_resolve(&txn, &proc_domain, 0);
+        ggkv_init(&proc_kv, &txn, proc_domain.id, 0);
 
-        int r;
-        unsigned int i;
-        uint64_t id = *cache;
-        if(0 == id){
-            struct cursor_t c;
-            buffer_t key;
-            r = txn_cursor_init(&c, (txn_t)txn, db1);
-            if(DB_SUCCESS == r)
-                r = cursor_last_key(&c, &key, NULL, 0);
-            cursor_close(&c);
-            switch(r){
-                case DB_SUCCESS:
-                    if(venc){
-                        i = 0;
-                        decode(id, key.data, i);
-                        assert(i == key.size);
-                    }else{
-                        assert(sizeof(id) == key.size);
-                        memcpy(&id, key.data, sizeof(id));
-                    }
-                    // passthrough
-                case DB_NOTFOUND:
-                    *cache = ++id;
-                    break;
-                default:
-                    errno = r;
-                    return 0;
+        /*
+        ggkv_key_str(&proc_kv, "len");
+        // pod_t val;
+        // ggkv_get(&proc_kv, &key, &val);
+        int len = ggkv_get_i32(&proc_kv, &key);
+
+        while (len--) {
+            ggkv_key_strf("%i/pid",len);
+            int pid = ggkv_get_i32(&proc_kv);
+            ggkv_key_strf("%i/path_crc",len);
+            int path_crc = ggkv_get_i32(&path_crc);
+            if (path_crc != pid_get_path_crc) {
+                break;
             }
         }
-        if(consume && id && 0 == ++(*cache)){
-            *cache = id;
-            errno = EOVERFLOW;
-            id = 0;
-        }
-        return id;
+
+        // kv_clear(&proc_kv);
+        // kv_deref this frees
+        */
+        ggtxn_commit(&txn);
+    }
+    return 0;
+}
+
+static int
+_lg_init_basepath(const char *argv0)
+{
+    char* path = NULL;
+
+    // /* Give the platform layer first shot at this. */
+    // path = __PHYSFS_platformCalcBaseDir(argv0);
+    // if (path != NULL)
+    //     return path;
+
+    path = ggctx.basepath;
+    char* dirsep = NULL;
+
+    GG_BAIL_IF(
+        argv0 == NULL, GGERR_INVALID_ARG, GGERR_INVALID_ARG)
+
+    dirsep = strrchr(argv0, GG_PATH_SEP);
+    if (dirsep != NULL)
+    {
+        const size_t size = ((size_t) (dirsep - argv0)) + 1;
+        // path = (char *) lg_malloc(size + 1); // GG_BAIL_IF(!path, GGERR_OUT_OF_MEMORY, 1);
+        memcpy(path, argv0, size);
+        path[size] = '\0';
+        mkdirp(path);
+        ggctx.basepath_len = size;
+        return 0;
+    } /* if */
+
+    /* argv0 wasn't helpful. */
+    GG_BAIL(GGERR_INVALID_ARG, GGERR_INVALID_ARG)
+}
+
+
+int
+lg_open(ggraph_t* g, const char * const subpath, const int flags)
+/*
+    TODO:
+        * ensure graph subpath only opened once?
+        * mkdirpat ?
+*/
+{
+    // ++ggctx.graphi;
+    // ggraph_t g = ggctx.graphs[ggctx.graphi];
+    char *path = ggctx.basepath;
+    const int basepath_len = ggctx.basepath_len;
+    char *dirsep = NULL;
+
+    // reset basepath
+    path[basepath_len] = '\0';
+
+    // check if subpath contains directory, if so mkdrip under basepath
+    dirsep = strrchr(subpath, GG_PATH_SEP);
+    if (dirsep != NULL) {
+        const size_t size = ((size_t) (dirsep - subpath)) + 1;
+        memcpy(path + basepath_len, subpath, size);
+        mkdirp(path);
+        path[basepath_len] = '\0';
     }
 
+    // open graph at subpath
+    strcat(path, subpath);
 
-    // returns 1 for success, 0 for failure (only for readonly)
-    static INLINE int __resolve_blob(gtxn_t* txn, uint64_t *ret, char const *data, const size_t len, const int readonly, uint64_t * const cache, int db1, int db2)
+    const int os_flags = O_RDWR | O_CREAT;
+    const int mode = 0760;
+    const int db_flags = 0;
+    GG_BAIL_IF(
+        ggraph_open(g, path, os_flags, mode, db_flags)
+    , GGERROR, errno);
+    return 0;
+}
+
+void
+lg_close(ggraph_t* g)
+{
+    if (g)
+		db_close((db_t)g);
+}
+
+int
+lg_rm(ggraph_t* g)
+{
+    if (!g)
+        return -1;
+    char* _path;
+    int r;
+    db_get_path((db_t)g, &_path);
+    const int len = strlen(_path) + 5 + 1;
+    char path[len];
+    strcpy(path, _path);
+    db_close((db_t)g);
+    r = rm(path);
+    if UNLIKELY(r)
+        return r;
+    strcat(path, "-lock");
+    r = rm(path);
+    return r;
+}
+
+// void* ggpool_next(ggpoot_t pool)
+// {}
+
+// ggraph_t* _ggraph_next()
+// {
+//     // ggctx.graphs// }
+
+
+int
+ggraph_open(ggraph_t* g, const char * const path, const int os_flags, const int mode, const int db_flags)
+{
+    int r;
+    // fixme? padsize hardcoded to 1gb
+    // TODO: explicitly disable DB_WRITEMAP - graph_txn_reset current depends on nested write txns
+    r = db_init((db_t)g, path, os_flags, mode,
+        db_flags // & ~DB_WRITEMAP
+        , DBS, DB_INFO, 1<<30);
+    if (r) {
+        // free(g);
+        // g = NULL;
+        errno = r;
+    }
+    return r;
+}
+
+LG_node
+lg_node_resolve(LG_txn* txn, LG_id type, LG_id val,
+    LG_log b4, int ro)
+{
+    LG_Node rec = {.type=type, .val=val};
+    lg_node_hydrate(txn, &rec, b4, ro);
+    return rec.id;
+}
+
+LG_edge
+lg_edge_resolve(LG_txn* txn, LG_node src, LG_node tgt, LG_id type, LG_id val,
+    LG_log b4, int ro)
+{
+    LG_Edge rec = {.type=type, .val=val, .src=src, .tgt=tgt};
+    lg_edge_hydrate(txn, &rec, b4, ro);
+    return rec.id;
+}
+
+LG_prop
+lg_prop_resolve(LG_txn* txn, LG_id pid, LG_id key, LG_id val,
+    LG_log b4, int ro)
+{
+    LG_Prop rec = {.pid=pid, .key=key, .val=val};
+    lg_prop_hydrate(txn, &rec, b4, ro);
+    return rec.id;
+}
+
+LG_blob
+lg_blob_resolve(LG_txn* txn, void const *data, const size_t size, int ro)
+{
+    LG_blob id;
+    ggdb_resolve_blob(txn, &id, data, size,
+        ro, &txn->next_strID, DB_SCALAR, DB_SCALAR_IDX);
+    return id;
+}
+
+int
+lg_blob_hydrate(LG_txn* txn, LG_Blob* ref, int ro)
+{
+    const int found = ggdb_resolve_blob(txn, &(ref->id), ref->data, ref->size,
+        ro, &txn->next_strID, DB_SCALAR, DB_SCALAR_IDX);
+    return !found;
+}
+
+int
+lg_node_hydrate(LG_txn* txn, LG_Node* rec, LG_log b4, int ro)
+{
+    rec->rectype = GRAPH_NODE;
+    // if (_node_lookup(...) || readonly) return ;
     {
-        assert(data);
+        ro = ro || b4 || TXN_RO(txn);
+        uint8_t kbuf[esizeof(rec->type) + esizeof(rec->val) + esizeof(rec->id)];
+        size_t klen = 0;
+        encode(rec->type, kbuf, klen);
+        encode(rec->val,  kbuf, klen);
+        // NOTE: rec->id = 0 if not found
+        _lg_rec_lookup(txn, (ggentry_t*)rec, DB_NODE_IDX, kbuf, klen, b4);
+        if (rec->id || ro)
+            return !(rec->id);
+    }
+    rec->next = 0;
+	rec->is_new = 1;
+    txn->node_delta++;
+    // _node_append(txn, rec, rec->id);
+    {
+        uint8_t log_data[1 + esizeof(rec->next) + esizeof(rec->type) + esizeof(rec->val)];
+        buffer_t log = { 0, log_data };
+        log_data[log.size++] = rec->rectype;
+        encode(rec->next, log_data, log.size);
+        encode(rec->type, log_data, log.size);
+        encode(rec->val,  log_data, log.size);
+        rec->id = _lg_log_append(txn, &log, 0); //rec->id);
+    }
+    // _node_index(txn, rec);
+    {
+        uint8_t kbuf[esizeof(rec->type) + esizeof(rec->val) + esizeof(rec->id)];
+        buffer_t key = { 0, kbuf };
+        buffer_t data = { 0, NULL };
         int r;
-        size_t count;
-        uint64_t id;
-        uint32_t chk;
-
-        struct cursor_t c, idx;
-        buffer_t val, vkey, ival, ikey = { .data = &chk, .size = sizeof(chk) };
-
-        r = txn_cursor_init(&c, (txn_t)txn, db1);
-        assert(DB_SUCCESS == r);
-        r = txn_cursor_init(&idx, (txn_t)txn, db2);
-        assert(DB_SUCCESS == r);
-
-        // fill in checksum
-        chk = crc32(0, (void *)data, len);
-
-        int retval = 1;
-
-        r = cursor_get(&idx, &ikey, &ival, DB_SET_KEY);
-        if (DB_SUCCESS == r) {
-            r = cursor_count(&idx, &count);
+        encode(rec->type, kbuf, key.size);
+        encode(rec->val,  kbuf, key.size);
+        encode(rec->id,   kbuf, key.size);
+        r = db_put((txn_t)txn, DB_NODE_IDX, &key, &data, 0);
             assert(DB_SUCCESS == r);
-            while (1) {
-                memcpy(&vkey, &ival, sizeof(ival));
-                // query main db
-                r = cursor_get(&c, &vkey, &val, DB_SET_KEY);
-                assert(DB_SUCCESS == r);
-                if (val.size == len && memcmp(val.data, data, len) == 0) {
-                    assert(sizeof(*ret) == vkey.size);
-                    memcpy(ret, vkey.data, sizeof(*ret));
-                    goto done;
-                }
-                if (0 == --count)
-                    break;
-                r = cursor_get(&idx, &ikey, &vkey, DB_NEXT_DUP);
-                assert(DB_SUCCESS == r);
+    }
+    return !(rec->id);
+}
+
+int
+lg_edge_hydrate(LG_txn* txn, LG_Edge* rec, LG_log b4, int ro)
+{
+    rec->rectype = GRAPH_EDGE;
+    // if (_edge_lookup(...) || ro) return ;
+    {
+        ro = ro || b4 || TXN_RO(txn);
+        uint8_t kbuf[esizeof(rec->type) + esizeof(rec->val) + esizeof(rec->src) + esizeof(rec->tgt) + esizeof(rec->id)];
+        size_t klen = 0;
+        encode(rec->type, kbuf, klen);
+        encode(rec->val,  kbuf, klen);
+        encode(rec->src,  kbuf, klen);
+        encode(rec->tgt,  kbuf, klen);
+        // NOTE: rec->id = 0 if not found
+        _lg_rec_lookup(txn, (ggentry_t*)rec, DB_EDGE_IDX, kbuf, klen, b4);
+        if (rec->id || ro)
+            return !(rec->id);
+    }
+    rec->next = 0;
+	rec->is_new = 1;
+	txn->edge_delta++;
+    // _edge_append
+    {
+        uint8_t log_data[1 + esizeof(rec->next) + esizeof(rec->type) + esizeof(rec->val) + esizeof(rec->src) + esizeof(rec->tgt)];
+        buffer_t log = { 0, log_data };
+        log_data[log.size++] = rec->rectype;
+        encode(rec->next, log_data, log.size);
+        encode(rec->type, log_data, log.size);
+        encode(rec->val,  log_data, log.size);
+        encode(rec->src,  log_data, log.size);
+        encode(rec->tgt,  log_data, log.size);
+        rec->id = _lg_log_append(txn, &log, 0);
+    }
+    // _edge_index
+    {
+        uint8_t kbuf[esizeof(rec->type) + esizeof(rec->val) + esizeof(rec->src) + esizeof(rec->tgt) + esizeof(rec->id)];
+        buffer_t key = { 0, kbuf };
+        buffer_t data = { 0, NULL };
+        int r;
+        encode(rec->type, kbuf, key.size);
+        encode(rec->val,  kbuf, key.size);
+        encode(rec->src,  kbuf, key.size);
+        encode(rec->tgt,  kbuf, key.size);
+        encode(rec->id,   kbuf, key.size);
+        r = db_put((txn_t)txn, DB_EDGE_IDX, &key, &data, 0);
+            assert(DB_SUCCESS == r);
+        key.size = 0;
+        encode(rec->src,  kbuf, key.size);
+        encode(rec->type, kbuf, key.size);
+        encode(rec->id,   kbuf, key.size);
+        r = db_put((txn_t)txn, DB_SRCNODE_IDX, &key, &data, 0);
+            assert(DB_SUCCESS == r);
+        key.size = 0;
+        encode(rec->tgt,  kbuf, key.size);
+        encode(rec->type, kbuf, key.size);
+        encode(rec->id,   kbuf, key.size);
+        r = db_put((txn_t)txn, DB_TGTNODE_IDX, &key, &data, 0);
+            assert(DB_SUCCESS == r);
+    }
+    return !(rec->id);
+}
+
+int
+lg_prop_hydrate(LG_txn* txn, LG_Prop* rec, LG_log b4, int ro)
+{
+    rec->rectype = GRAPH_PROP;
+    // if ((_prop_lookup(txn, e, b4) && val == rec->val) || readonly)
+    {
+        ro = ro || b4 || TXN_RO(txn);
+        uint8_t* logbuf;
+        uint8_t kbuf[esizeof(rec->pid) + esizeof(rec->key) + esizeof(rec->id)];
+        size_t klen = 0;
+        encode(rec->pid, kbuf, klen);
+        encode(rec->key, kbuf, klen);
+        // NOTE: rec->id = 0 if not found
+        logbuf = _lg_rec_lookup(txn, (ggentry_t*)rec, DB_PROP_IDX, kbuf, klen, b4);
+        if (logbuf != NULL) { // && rec->id
+            klen = 0;
+            klen += enclen(logbuf, klen); // skip pid
+            klen += enclen(logbuf, klen); // skip key
+            if (ro) { // if readonly then write val into rec
+                decode(rec->val, logbuf, klen); // write current value
+                return !(rec->id);
             }
-            r = DB_NOTFOUND;
+            else { // else check old val == rec val
+                LG_str val;
+                decode(val, logbuf, klen); // pull current value
+                if (val == rec->val)
+                    return !(rec->id);
+            }
         }
-        assert(DB_NOTFOUND == r);
-
-        // no key at all, or no matching strings
-
-        // bail out now for read-only requests
-        if (readonly) {
-            retval = 0;
-            *ret = 0;
-            goto done;
-        }
-
-        // figure out next ID to use
-        *ret = id = _nextID(txn, 1, cache, db1, 0);
-        assert(id);
-
-        // store new string in db
-        vkey.size = sizeof(id);
-        vkey.data = &id;
-        val.size = len;
-        r = cursor_put(&c, &vkey, &val, DB_APPEND|DB_RESERVE);
-        assert(DB_SUCCESS == r);
-        memcpy(val.data, data, len);
-
-        // and add index entry
-        ikey.data = &chk;
-        ikey.size = sizeof(chk);
-        assert(&id == vkey.data);
-        r = cursor_put(&idx, &ikey, &vkey, DB_APPENDDUP);
-        assert(DB_SUCCESS == r);
-
-    done:
-        cursor_close(&c);
-        cursor_close(&idx);
-        return retval;
+        else if (ro)
+            return !(rec->id);
     }
-
-    int d_resolve(gtxn_t* txn, d_t* d, int readonly)
+    rec->next = 0;
+	rec->is_new = 1;
+	txn->edge_delta++;
+    // _prop_append
     {
-        // static INLINE int _string_resolve(gtxn_t* txn, strID_t *ret, void const *data, const size_t len, int readonly){
-        if (0 < d->id)              // already resolved
+        uint8_t log_data[1 + esizeof(rec->next) + esizeof(rec->pid) + esizeof(rec->key) + esizeof(rec->val)];
+        buffer_t log = { 0, log_data };
+        log_data[log.size++] = rec->rectype;
+        encode(rec->next, log_data, log.size);
+        encode(rec->pid,  log_data, log.size);
+        encode(rec->key,  log_data, log.size);
+        encode(rec->val,  log_data, log.size);
+        rec->id = _lg_log_append(txn, &log, rec->id); // NOTE: ->id
+    }
+    // _prop_index
+    {
+        uint8_t kbuf[esizeof(rec->pid) + esizeof(rec->key) + esizeof(rec->id)];
+        buffer_t key = { 0, kbuf };
+        buffer_t data = { 0, NULL };
+        int r;
+        encode(rec->pid, kbuf, key.size);
+        encode(rec->key, kbuf, key.size);
+        encode(rec->id,  kbuf, key.size);
+        r = db_put((txn_t)txn, DB_PROP_IDX, &key, &data, 0);
+            assert(DB_SUCCESS == r);
+    }
+    return !(rec->id);
+}
+
+/*
+    ZZZ: _log_append
+*/
+static INLINE LG_log
+_lg_log_append(LG_txn* txn, buffer_t* log_buf, LG_log delID)
+{
+    LG_log id;
+	uint8_t kbuf[esizeof(id)];
+	buffer_t key = { 0, kbuf };
+    int r;
+	id = ggdb_next_id(txn, 1, &txn->next_logID, DB_LOG, 1);
+	if (delID) {
+		uint8_t tmp[LOG_MAX_BUF_SIZE];
+		__lg_log_append_deletion(txn, id, delID, tmp);
+	}
+	encode(id, kbuf, key.size);
+	r = db_put((txn_t)txn, DB_LOG, &key, log_buf, DB_APPEND);
+	if UNLIKELY(DB_SUCCESS != r) {
+		fprintf(stderr, "err: %s\n", db_strerror(r));
+        assert(DB_SUCCESS == r); // ugh
+    }
+	return id;
+}
+
+/*
+    ZZZ: _delete
+*/
+static INLINE void
+__lg_log_append_deletion(LG_txn* txn, const LG_log newrecID, const LG_log oldrecID, uint8_t *mem)
+{
+	uint8_t kbuf[esizeof(newrecID)];
+	buffer_t key = { 0, kbuf };
+    buffer_t olddata;
+    buffer_t newdata = { 1, mem };
+    int tail;
+    int tlen;
+    int r;
+	// update existing log entry - first fetch current
+	encode(oldrecID, kbuf, key.size);
+	r = db_get((txn_t)txn, DB_LOG, &key, &olddata);
+	assert(DB_SUCCESS == r);
+	// copy rectype (size already set to 1)
+	const uint8_t rectype = *mem = *(uint8_t *)olddata.data;
+	// fill in new nextID
+	encode(newrecID, mem, newdata.size);
+	// append remainder of original record
+	tail = 1 + enclen(olddata.data, 1);
+	tlen = olddata.size - tail;
+	memcpy(&mem[newdata.size], &((uint8_t *)olddata.data)[tail], tlen);
+	newdata.size += tlen;
+	// store
+	r = db_put((txn_t)txn, DB_LOG, &key, &newdata, 0);
+	assert(DB_SUCCESS == r);
+	// recursively delete item properties, and edges if item is a node
+    LG_Iter* iter;
+	if (GRAPH_NODE == rectype) {
+        /*
+        TODO: malloc-free solution ?
+            ...
+            ggiter iters[3];
+            _lg_entry_iter(txn, &iters[0], DB_PROP_IDX, oldrecID, 0);
+            ...
+        */
+		iter = lg_iter_concat(3,
+			lg_idx_iter_new(txn, DB_PROP_IDX, oldrecID, 0),
+			lg_idx_iter_new(txn, DB_SRCNODE_IDX, oldrecID, 0),
+			lg_idx_iter_new(txn, DB_TGTNODE_IDX, oldrecID, 0)
+        );
+		txn->node_delta--;
+	} else {
+		if (GRAPH_EDGE == rectype)
+			txn->edge_delta--;
+		iter = lg_idx_iter_new(txn, DB_PROP_IDX, oldrecID, 0);
+	}
+    // recurse children deletion
+    LG_id child_id;
+	while ( (child_id = lg_iter_next_id(iter)) ) { // while ( (child = graph_iter_next(iter)) ) {
+		__lg_log_append_deletion(txn, newrecID, child_id, mem);
+	}
+	lg_iter_close(iter);
+}
+
+
+LG_Iter*
+lg_iter_new(LG_txn* txn, int dbi, void *pfx, size_t pfxlen, LG_log b4)
+{
+	LG_Iter* gi = smalloc(sizeof(*gi));
+	if (gi) {
+		int r = txn_iter_init((iter_t)gi, (txn_t)txn, dbi, pfx, pfxlen);
+		if (DB_SUCCESS == r) {
+			gi->beforeID = _cleanse_beforeID(txn, b4);
+			gi->txn = txn;
+			gi->next = NULL;
+			gi->head_active = 1;
+		} else {
+			free(gi);
+			gi = NULL;
+			errno = r;
+		}
+	}
+	return gi;
+}
+
+/*
+    ZZZ: _graph_entry_idx
+*/
+LG_Iter*
+lg_idx_iter_new(LG_txn* txn, int dbi, LG_log id, LG_log b4)
+{
+	uint8_t pfx[esizeof(id)];
+	size_t pfxlen = 0;
+	encode(id, pfx, pfxlen);
+	return lg_iter_new(txn, dbi, pfx, pfxlen, b4);
+}
+
+void lg_iter_close(LG_Iter* gi)
+{
+	while (gi) {
+		ggiter_t* next = gi->next;
+		iter_close((iter_t)gi); // TODO: move to malloc-free internals...
+		gi = next;
+	}
+}
+
+/*
+    ZZZ: graph_iter_concat
+*/
+LG_Iter*
+lg_iter_concat(unsigned int count, ...)
+{
+	LG_Iter* head = NULL;
+    LG_Iter* tail = NULL;
+	va_list ap;
+	va_start(ap, count);
+	while(count--){
+		LG_Iter* current = va_arg(ap, LG_Iter*);
+		if(!current)
+			continue;
+		if(tail)
+			tail->next = current;
+		else
+			head = tail = current;
+		while(tail->next)
+			tail = tail->next;
+	}
+	va_end(ap);
+	return head;
+}
+
+/*
+    ZZZ: graph_iter_next
+*/
+LG_id
+lg_iter_next_id(LG_Iter* gi)
+{
+    if UNLIKELY(gi == NULL)
+        return 0;
+    LG_log id;
+    while ((id = _lg_iter_next_id(gi))) {
+        // ! now we filter out overwritten IDs
+        LG_log next;
+        buffer_t logbuf;
+        if UNLIKELY(lg_log_read(gi->txn, id, &logbuf))
+            continue;
+        int declen = 1;
+        decode(next, logbuf.data, declen);
+        if (next == 0 || (gi->beforeID && next >= gi->beforeID))
+            return id;
+        /*
+        ZZZ:
+            ggentry_t* e = graph_entry(gi->txn, id);
+            if(e->next == 0 || (gi->beforeID && e->next >= gi->beforeID))
+                return e;
+            free(e);
+        */
+    }
+    return id;
+}
+
+/*
+    scans index and returns logIDs < beforeID (if beforeID applies)
+    ! caller is responsible for filtering out overwritten IDs
+    ZZZ: _iter_idx_nextID
+*/
+static INLINE LG_log
+_lg_iter_next_id(LG_Iter* iter)
+{
+	LG_log id = 0;
+	if (iter->head_active) {
+		// head is still active - try it
+		if ((id = __lg_iter_blarf_id(iter)))
+			return id;
+		// exhaused - deactivate head
+		iter->head_active = 0;
+		iter->txn = (iter->next) ? iter->next->txn : NULL;
+	}
+	while (iter->next) {
+		if ((id = __lg_iter_blarf_id(iter->next)))
+			return id;
+		// exhausted - remove chained iterator
+		ggiter_t* tmp = iter->next;
+		iter->next = tmp->next;
+		iter_close((iter_t)tmp);
+		iter->txn = (iter->next) ? iter->next->txn : NULL;
+	}
+    return id;
+}
+
+static INLINE LG_log
+__lg_iter_blarf_id(LG_Iter* iter)
+{
+    LG_log b4 = iter->beforeID;
+    iter_t _iter = (iter_t)iter;
+    while (iter_next_key(_iter) == DB_SUCCESS) {
+        LG_log id;
+        // id = _parse_idx_logID(_iter->key.data, _iter->key.size);
+        {
+            uint8_t*  buf = _iter->key.data;
+            size_t buflen = _iter->key.size;
+            //
+            size_t i = 0, len = 0;
+            do {
+                i += len;
+                len = enclen(buf, i);
+            }
+            while (i + len < buflen);
+            assert(i + len == buflen);
+            decode(id, buf, i);
+        }
+        if (0 == b4 || id < b4)
+            return id;
+    }
+    return 0;
+}
+
+
+/*
+    ZZZ: extracted from `graph_entry`
+*/
+int
+lg_log_read(LG_txn* txn, const LG_log id, buffer_t* buf)
+{
+    // TODO: ? val.size = 0; val->data = NULL;
+    if UNLIKELY(!id)
+        return 1;
+    uint8_t key_data[esizeof(id)];
+	buffer_t key = { 0, key_data };
+    int r;
+    encode(id, key_data, key.size);
+    r = db_get((txn_t)txn, DB_LOG, &key, buf);
+    return r;
+}
+
+int
+lg_node_read(LG_txn* txn, const LG_node id, LG_Node* ref)
+{
+    buffer_t buf;
+    // TODO: ref->id = 0;
+    int r = lg_log_read(txn, (LG_log)id, &buf);
+    if (DB_SUCCESS == r) {
+        const uint8_t rectype = *((uint8_t *)buf.data);
+        if (GRAPH_NODE != rectype)
             return 1;
-        if (NULL == d->data) {      // unresolvable TODO:
-            assert(0 == d->size);
-            d->id = 0;
+        ref->id = id;
+		ref->rectype = rectype;
+        int klen = 1;
+        decode(ref->next, buf.data, klen);
+        decode(ref->type, buf.data, klen);
+		decode(ref->val,  buf.data, klen);
+    }
+    return r;
+}
+
+int
+lg_edge_read(LG_txn* txn, const LG_edge id, LG_Edge* ref)
+{
+    buffer_t buf;
+    // TODO: ref->id = 0;
+    int r = lg_log_read(txn, (LG_log)id, &buf);
+    if (DB_SUCCESS == r) {
+        const uint8_t rectype = *(uint8_t *)buf.data;
+        if (GRAPH_NODE != rectype)
             return 1;
-        }
-        return __resolve_blob(txn, &d->id, d->data, d->size, readonly, &txn->next_strID, DB_SCALAR, DB_SCALAR_IDX);
+        ref->id = id;
+		ref->rectype = rectype;
+        int klen = 1;
+        decode(ref->next, buf.data, klen);
+        decode(ref->type, buf.data, klen);
+        decode(ref->val,  buf.data, klen);
+        decode(ref->src,  buf.data, klen);
+        decode(ref->tgt,  buf.data, klen);
     }
+    return r;
+}
 
-
-
-
-    char *__blob(gtxn_t* txn, uint64_t id, size_t *len, int db1){
-        assert(id);
-        buffer_t key = { sizeof(id), &id }, data;
-        int r = db_get((txn_t)txn, db1, &key, &data);
-        assert(DB_SUCCESS == r);
-        if(len)
-            *len = data.size;
-        return data.data;
-    }
-    char *graph_string(gtxn_t* txn, strID_t id, size_t *len){
-        return id ? __blob(txn, id, len, DB_SCALAR) : ((*len = 0), NULL);
-    }
-
-
-    static INLINE int _string_resolve(gtxn_t* txn, strID_t *ret, void const *data, const size_t len, int readonly){
-        if(NULL == data){
-            assert(0 == len);
-            *ret = 0;
+int
+lg_prop_read(LG_txn* txn, const LG_prop id, LG_Prop* ref)
+{
+    buffer_t buf;
+    // TODO: ref->id = 0;
+    int r = lg_log_read(txn, (LG_log)id, &buf);
+    if (DB_SUCCESS == r) {
+        const uint8_t rectype = *(uint8_t *)buf.data;
+        if (GRAPH_NODE != rectype)
             return 1;
-        }
-        return __resolve_blob(txn, ret, data, len, readonly, &txn->next_strID, DB_SCALAR, DB_SCALAR_IDX);
+        ref->id = id;
+		ref->rectype = rectype;
+        int klen = 1;
+        decode(ref->next, buf.data, klen);
+        decode(ref->pid,  buf.data, klen);
+        decode(ref->key,  buf.data, klen);
+        decode(ref->val,  buf.data, klen);
     }
+    return r;
+}
 
-    int graph_string_lookup(gtxn_t* txn, strID_t *id, void const *data, const size_t len){
-        return _string_resolve(txn, id, data, len, 1);
-    }
-
-    int graph_string_resolve(gtxn_t* txn, strID_t *id, void const *data, const size_t len){
-        return _string_resolve(txn, id, data, len, 0);
-    }
-
-    // fetch string by encoded ID
-    static INLINE char *graph_string_enc(gtxn_t* txn, void *id_enc, size_t *slen)
-    {
-        strID_t id;
-        int len = 0;
-        decode(id, id_enc, len);
-        return graph_string(txn, id, slen);
-    }
-
-    void gkv_init(gtxn_t* txn, gkv_t* kv, d_t domain, const int flags)
-    {
-        kv->txn = txn;
-        kv->flags = flags;
-        kv->refs = 1;
-        kv->klen = 0;
-        // TODO: docs on gkv as perf-oriented/unsafe
-        // if ( !d_resolve(txn, domain, (TXN_RO(txn) || (flags & LG_KV_RO))) )
-        //     return 0;
-        encode(domain.id, kv->kbuf, kv->klen);
-        // return 1;
-    }
-
-    static INLINE int _gkv_setup_key(gkv_t* kv, void *key, size_t klen, int readonly)
-    {
-        strID_t id;
-        kv->key.data = kv->kbuf;
-        kv->key.size = kv->klen;
-        if (kv->flags & LG_KV_MAP_KEYS) {
-            if (!_string_resolve(kv->txn, &id, key, klen, readonly))
-                return 0;
-            encode(id, kv->kbuf, kv->key.size);
-        } else {
-            assert(klen <= sizeof(kv->kbuf) - kv->klen);
-            memcpy(&kv->kbuf[kv->klen], key, klen);
-            kv->key.size += klen;
-        }
+int
+lg_blob_read(LG_txn* txn, const LG_blob id, LG_Blob* ref)
+{
+    if UNLIKELY(!id) {
+        ref->id = 0;
         return 1;
     }
+    buffer_t key = { sizeof(id), &id };
+    int r = db_get((txn_t)txn, DB_SCALAR, &key, &(ref->buffer));
+    if (DB_SUCCESS == r)
+        ref->id = id;
+    return r;
+}
 
-    int gkv_get(gkv_t* kv, d_t key, d_t* val)
-    {
-        val->id = 0;
-        if (!_gkv_setup_key(kv, key.data, key.size, 1))
-            goto NOTFOUND;
-        if (DB_SUCCESS != db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->val))
-            goto NOTFOUND;
-        if (kv->flags & LG_KV_MAP_DATA) {
-            val->data = graph_string_enc(kv->txn, kv->val.data, &(val->size));
-        } else {
-            val->data = kv->val.data;
-            val->size = kv->val.size;
-        }
-        return DB_SUCCESS;
-    NOTFOUND:
-        val->size = 0;
-        val->data = NULL;
-        return DB_NOTFOUND;
-    }
+/*
+ggentry_t* graph_entry(graph_txn_t txn, const LG_log id){
+	static const int recsizes[] = {
+		[GRAPH_DELETION] = sizeof(ggentry_t),
+		[GRAPH_NODE]     = sizeof(ggnode_t),
+		[GRAPH_EDGE]     = sizeof(ggedge_t),
+		[GRAPH_PROP]     = sizeof(ggprop_t),
+	};
+	uint8_t buf[esizeof(id)];
+	buffer_t key = { 0, buf };
+    buffer_t data;
+	ggentry_t* e = NULL;
+	int r;
+	encode(id, buf, key.size);
+	r = db_get((txn_t)txn, DB_LOG, &key, &data);
+	if (DB_SUCCESS == r) {
+		const uint8_t rectype = *(uint8_t *)data.data;
+		assert(rectype < sizeof(recsizes) / sizeof(*recsizes));
+		int klen = 1;
+		e = smalloc(recsizes[rectype]);
+		e->id = id;
+		e->rectype = rectype;
+		decode(e->next, data.data, klen);
+		switch(rectype){
+			case GRAPH_NODE:
+				decode(((node_t)e)->type, data.data, klen);
+				decode(((node_t)e)->val,  data.data, klen);
+				break;
+			case GRAPH_EDGE:
+				decode(((edge_t)e)->type, data.data, klen);
+				decode(((edge_t)e)->val,  data.data, klen);
+				decode(((edge_t)e)->src,  data.data, klen);
+				decode(((edge_t)e)->tgt,  data.data, klen);
+				break;
+			case GRAPH_PROP:
+				decode(((prop_t)e)->pid,  data.data, klen);
+				decode(((prop_t)e)->key,  data.data, klen);
+				decode(((prop_t)e)->val,  data.data, klen);
+				break;
+		}
+	}
+	return e;
+}
+*/
 
-    // int gkv_del(gkv_t* kv, d_t key)
-    // {
 
-    // }
-
-    // int gkv_put(gkv_t* kv, d_t key, d_t* val)
-    // {
-
-    // }
-
-    // void *kv_first_key(kv_t kv, size_t *klen)
-    // void *kv_last_key(kv_t kv, size_t *klen)
-    // int kv_clear_pfx(kv_t kv, uint8_t *pfx, unsigned int len)
-    // int kv_clear(kv_t kv)
-    // int kv_fifo_push_n(kv_t kv, void **datas, size_t *lens, const int count)
-    // int kv_fifo_push(kv_t kv, void *data, size_t len)
-    // {
-	//     return kv_fifo_push_n(kv, &data, &len, 1);
-    // }
-    // int kv_fifo_peek_n(kv_t kv, void **datas, size_t *lens, const int count)
-    // int kv_fifo_peek(kv_t kv, void **data, size_t *size)
-    // {
-	//     return kv_fifo_peek_n(kv, data, size, 1);
-    // }
-    // int kv_fifo_delete(kv_t kv, const int count)
-    // int kv_fifo_len(kv_t kv, uint64_t *len)
 #endif // ifdef LG_IMPLEMENTATION

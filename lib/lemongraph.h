@@ -3,85 +3,14 @@
 
 #include "lg.h"
 
-// log entry types
-#define GRAPH_DELETION 0x0
-#define GRAPH_NODE     0x1
-#define GRAPH_EDGE     0x2
-#define GRAPH_PROP     0x3
-
-// edge directions
-#define GRAPH_DIR_IN   0x1
-#define GRAPH_DIR_OUT  0x2
-#define GRAPH_DIR_BOTH 0x3
-
-
-
-#define PRI_LOGID PRIu64
-#define PRI_STRID PRIu64
-
-// typedef uint64_t logID_t;
-// typedef uint64_t strID_t;
-// typedef uint64_t txnID_t;
-
-typedef g_t* graph_t;
-typedef gtxn_t * graph_txn_t;
-typedef giter_t * graph_iter_t;
-typedef gkv_t* kv_t;
-typedef gkv_iter_t* kv_iter_t;
-// typedef struct graph_t * graph_t;
-// typedef struct graph_txn_t * graph_txn_t;
-// typedef struct graph_iter_t * graph_iter_t;
-typedef struct entry_t   * entry_t;
-typedef struct entry_t   * deletion_t;
-typedef struct node_t    * node_t;
-typedef struct edge_t    * edge_t;
-typedef struct prop_t    * prop_t;
-// typedef struct kv_t      * kv_t;
-// typedef struct kv_iter_t * kv_iter_t;
-// For deletions, the 'next' field points to the top-level entry that was the target of the delete.
-// As a deletion may cascade to multiple children, I don't think it makes any sense to reserve it for pointing to a future entry.
-
-struct entry_t{
-	logID_t id;
-	uint8_t is_new:1;
-	uint8_t rectype:7;
-	logID_t next;
-};
-
-struct node_t {
-	logID_t id;
-	uint8_t is_new:1;
-	uint8_t rectype:7;
-	logID_t next;
-	strID_t type;
-	strID_t val;
-};
-
-struct edge_t {
-	logID_t id;
-	uint8_t is_new:1;
-	uint8_t rectype:7;
-	logID_t next;
-	strID_t type;
-	strID_t val;
-	logID_t src;
-	logID_t tgt;
-};
-
-struct prop_t {
-	logID_t id;
-	uint8_t is_new:1;
-	uint8_t rectype:7;
-	logID_t next;
-	logID_t pid;
-	strID_t key;
-	strID_t val;
-};
-
-
-
-
-
+typedef ggraph_t* graph_t;
+typedef ggtxn_t* graph_txn_t;
+typedef ggiter_t* graph_iter_t;
+typedef ggentry_t* entry_t;
+typedef ggentry_t* deletion_t;
+typedef ggnode_t* node_t;
+typedef ggedge_t* edge_t;
+typedef ggprop_t* prop_t;
 
 char *graph_strerror(int err);
 
@@ -194,53 +123,10 @@ int graph_string_lookup(graph_txn_t txn, strID_t *id, void const *data, const si
 int graph_string_resolve(graph_txn_t txn, strID_t *id, void const *data, const size_t len);
 logID_t graph_log_nextID(graph_txn_t txn);
 
-
 void graph_node_print(graph_txn_t txn, node_t node, logID_t beforeID);
 void graph_edge_print(graph_txn_t txn, edge_t edge, logID_t beforeID);
 void graph_nodes_print(graph_iter_t nodes);
 void graph_edges_print(graph_iter_t edges);
-
-// kv storage api - domains get mapped to stringIDs via the string storage layer
-// so do keys and values if LG_KV_MAP_KEYS or LG_KV_MAP_DATA are set
-// non-mapped keys must be fairly short (less than 500 bytes is safe)
-// flags are not stored internally - client must know per domain
-// note - related kv & kv_iter objects share buffers - do not use concurrently from multiple threads
-
-kv_t graph_kv(graph_txn_t txn, const void *domain, const size_t dlen, const int flags);
-void *kv_get(kv_t kv, void *key, size_t klen, size_t *dlen);
-void *kv_first_key(kv_t kv, size_t *klen);
-void *kv_last_key(kv_t kv, size_t *len);
-int kv_del(kv_t kv, void *key, size_t klen);
-int kv_put(kv_t kv, void *key, size_t klen, void *data, size_t dlen);
-int kv_next(kv_t kv, void **key, size_t *klen, void **data, size_t *dlen);
-int kv_next_reset(kv_t kv);
-int kv_clear_pfx(kv_t kv, uint8_t *pfx, unsigned int len);
-int kv_clear(kv_t kv);
-void kv_deref(kv_t kv);
-
-kv_iter_t kv_iter(kv_t kv);
-kv_iter_t kv_iter_pfx(kv_t kv, uint8_t *pfx, unsigned int len);
-int kv_iter_next(kv_iter_t iter, void **key, size_t *klen, void **data, size_t *dlen);
-int kv_iter_seek(kv_iter_t iter, void *key, size_t klen);
-void kv_iter_close(kv_iter_t iter);
-
-// fifos
-int kv_fifo_push_n(kv_t kv, void **datas, size_t *lens, const int count);
-int kv_fifo_push(kv_t kv, void *data, size_t len);
-int kv_fifo_peek_n(kv_t kv, void **datas, size_t *lens, const int count);
-int kv_fifo_peek(kv_t kv, void **data, size_t *size);
-int kv_fifo_delete(kv_t kv, const int count);
-int kv_fifo_len(kv_t kv, uint64_t *len);
-
-// priority queues
-int kv_pq_add(kv_t kv, void *key, size_t klen, uint8_t priority);
-int kv_pq_get(kv_t kv, void *key, size_t klen);
-int kv_pq_del(kv_t kv, void *key, size_t klen);
-kv_iter_t kv_pq_iter(kv_t kv);
-int kv_pq_iter_next(kv_iter_t iter, void **data, size_t *dlen);
-uint8_t *kv_pq_cursor(kv_t kv, uint8_t priority);
-int kv_pq_cursor_next(graph_txn_t txn, uint8_t *cursor, void **key, size_t *klen);
-void kv_pq_cursor_close(uint8_t *cursor);
 
 // helpers for serializing/unserializing tuples of non-negative integers
 int pack_uints(int count, uint64_t *ints, void *buffer);

@@ -9,11 +9,9 @@
 #include<sys/stat.h>
 #include<unistd.h>
 
-#include"lmdb.h"
-#include"db.h"
-#include"osal.h"
-
-#include"static_assert.h"
+#include "std.c"
+#include "db.h"
+#include "osal.h"
 
 #ifndef offsetof
 #define offsetof(type, member) (size_t)(&((type *)NULL)->member - NULL)
@@ -89,7 +87,6 @@ STATIC_ASSERT((int) DB_PREV_MULTIPLE  == (int) MDB_PREV_MULTIPLE,  "mismatched M
 // handy helpers
 #define TXN_dbi(txn, dbi) (MDB_dbi)txn->db->handles[dbi]
 #define TXN(txn) (MDB_txn *)txn->txn
-#define TXNP(txn) (MDB_txn **)&txn->txn
 #define CURSOR(cursor) (MDB_cursor *)cursor->cursor
 #define CURSORP(cursor) (MDB_cursor **)&cursor->cursor
 
@@ -201,7 +198,7 @@ int db_drop(txn_t txn, int dbi, int del){
 }
 
 int txn_cursor_new(cursor_t *cursor, txn_t txn, int dbi){
-	*cursor = malloc(sizeof(struct cursor_t));
+	*cursor = smalloc(sizeof(struct cursor_t));
 	int r = errno;
 	if(*cursor){
 		r = txn_cursor_init(*cursor, txn, dbi);
@@ -294,7 +291,7 @@ int txn_commit(txn_t txn){
 }
 
 int db_txn_new(txn_t *txn, db_t db, txn_t parent, int flags){
-	*txn = malloc(sizeof(struct txn_t));
+	*txn = smalloc(sizeof(struct txn_t));
 	int r = errno;
 	if(*txn){
 		r = db_txn_init(*txn, db, parent, flags);
@@ -318,7 +315,7 @@ int db_txn_init(txn_t txn, db_t db, txn_t parent, int flags){
 	txn->rw = !txn->ro;
 	txn->updated = 0;
 	txn->release = 0;
-	return _txn_begin(db, parent ? parent->txn : NULL, flags, TXNP(txn));
+	return _txn_begin(db, parent ? parent->txn : NULL, flags, (MDB_txn **)&txn->txn);
 }
 
 int db_sync(db_t db, int force){
@@ -416,6 +413,45 @@ static INLINE int _txn_begin(db_t db, MDB_txn *parent, unsigned int flags, MDB_t
 
 	return r;
 }
+// static INLINE int _txn_begin(db_t db, MDB_txn *parent, unsigned int flags, MDB_txn **txn){
+// 	int r;
+
+// 	// Here's the deal - we need to grow the mapsize if:
+// 	//  * we are a write transaction, and there is less than 1gb overhead
+// 	//  * txn fails with MDB_MAP_RESIZED
+// 	// However, mapsize may only be altered if there are no active txns in this process.
+// 	if(flags & MDB_RDONLY){
+// 		// don't care about overhead for readonly txns
+// 		r = _mdb_txn_begin((MDB_env *)db->env, parent, flags, txn);
+// 		while (MDB_MAP_RESIZED == r){
+// 			pthread_mutex_lock(&(db->mutex));
+// 			r = _do_resize(db, 0);
+// 			pthread_mutex_unlock(&db->mutex);
+// 			if(DB_SUCCESS == r)
+// 				r = _mdb_txn_begin((MDB_env *)db->env, parent, flags, txn);
+// 		}
+// 	}else if(parent){
+// 		// cannot resize map for nested txns
+// 		r = _mdb_txn_begin((MDB_env *)db->env, parent, flags, txn);
+// 	}else{
+// 		// ensure we have room for growth prior to opening write txns
+// 		do{
+// 			pthread_mutex_lock(&(db->mutex));
+// 			r = _auto_resize(db);
+// 			pthread_mutex_unlock(&db->mutex);
+// 			if(DB_SUCCESS == r)
+// 				r = _mdb_txn_begin((MDB_env *)db->env, parent, flags, txn);
+// 		}while(MDB_MAP_RESIZED == r);
+// 	}
+// 	pthread_mutex_lock(&db->mutex);
+// 	if(DB_SUCCESS == r)
+// 		db->txns++;
+// 	else if(0 == db->txns)
+// 		pthread_cond_signal(&db->cond);
+// 	pthread_mutex_unlock(&db->mutex);
+
+// 	return r;
+// }
 
 int db_remap(db_t db){
 	MDB_envinfo info;
@@ -429,8 +465,13 @@ int db_remap(db_t db){
 	return r;
 }
 
+int db_get_path(db_t db, const char **path)
+{
+	return mdb_env_get_path((MDB_env *)(( (db_t)db )->env), path);
+}
+
 int db_new(db_t *db, const char * const path, const int flags, const int mode, int mdb_flags, int ndbi, dbi_t *dbis, size_t padsize){
-	*db = malloc(sizeof(struct db_t));
+	*db = smalloc(sizeof(struct db_t));
 	int r = errno;
 	if(*db){
 		r = db_init(*db, path, flags, mode, mdb_flags, ndbi, dbis, padsize);
@@ -444,7 +485,7 @@ int db_new(db_t *db, const char * const path, const int flags, const int mode, i
 	return r;
 }
 
-int db_init(db_t db, const char * const path, const int flags, const int mode, int mdb_flags, int ndbi, dbi_t *dbis, size_t padsize){
+int db_init(db_t db, const char * const path, const int flags, const int mode, int mdb_flags, int ndbi, dbi_t *dbis, size_t padsize) {
 	int init_status = 0;
 	int fd = -1, err = 0xdeadbeef;
 	struct stat st;
@@ -535,7 +576,7 @@ int db_init(db_t db, const char * const path, const int flags, const int mode, i
 		struct txn_t _txn;
 		txn_t txn = &_txn;
 
-		db->handles = malloc(sizeof(db->handles[0]) * ndbi);
+		db->handles = smalloc(sizeof(db->handles[0]) * ndbi);
 		FAIL(!db->handles, err, errno, fail);
 		init_status++;
 
@@ -607,7 +648,7 @@ void db_close(db_t db){
 	((volatile db_t) db)->env = NULL;
 	pthread_cond_destroy(&db->cond);
 	pthread_mutex_destroy(&db->mutex);
-	if(db->release)
+	if (db->release)
 		free(db);
 }
 
@@ -642,7 +683,7 @@ int db_get_disksize(db_t db, size_t *size){
  */
 
 int txn_iter_new(iter_t *iter, txn_t txn, int dbi, void *pfx, const unsigned int len){
-	*iter = malloc(sizeof(**iter));
+	*iter = smalloc(sizeof(**iter));
 	int r = errno;
 	if(*iter){
 		r = txn_iter_init(*iter, txn, dbi, pfx, len);

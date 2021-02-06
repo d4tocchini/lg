@@ -1,12 +1,12 @@
 #!/bin/bash
 
-LMDB_REPO=https://github.com/LMDB/lmdb.git
-LMDB_COMMIT=8d0cbbc936091eb85972501a9b31a8f86d4c51a7
+# LMDB_REPO=https://github.com/LMDB/lmdb.git
+# LMDB_COMMIT=8d0cbbc936091eb85972501a9b31a8f86d4c51a7
 
-function lg_fetch_lmdb(){
-	git_fetch_commit lmdb "$LMDB_COMMIT" "$LMDB_REPO"
-}
+# function lg_fetch_lmdb(){
+# 	git_fetch_commit lmdb "$LMDB_COMMIT" "$LMDB_REPO"
+# }
 
-function lg_update_lmdb(){
-	git_update_commit lmdb LMDB_COMMIT "$BASH_SOURCE"
-}
+# function lg_update_lmdb(){
+# 	git_update_commit lmdb LMDB_COMMIT "$BASH_SOURCE"
+# }
