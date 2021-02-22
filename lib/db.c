@@ -112,34 +112,56 @@ int cursor_del(cursor_t cursor, unsigned int flags){
 	return ret;
 }
 
-int cursor_count(cursor_t cursor, size_t *count){
+int
+cursor_count(cursor_t cursor, size_t *count)
+{
 	return cursor->prev ? mdb_cursor_count(CURSOR(cursor), count) : MDB_BAD_TXN;
 }
 
-int cursor_first_key(cursor_t cursor, buffer_t *key, uint8_t *pfx, const unsigned int pfxlen){
-	if(!cursor->prev)
+int
+cursor_first(cursor_t cursor, buffer_t *key, buffer_t *val,
+	uint8_t *pfx, const unsigned int pfxlen)
+{
+	if (!cursor->prev)
 		return MDB_BAD_TXN;
-
-	if(!pfx || !pfxlen)
-		return mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, NULL, MDB_FIRST);
-
+	if (!pfx || !pfxlen)
+		return mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, (MDB_val *)val, MDB_FIRST);
 	key->size = pfxlen;
 	key->data = pfx;
-	int r = mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, NULL, MDB_SET_RANGE);
-	if(DB_SUCCESS == r){
-		if(key->size < pfxlen || memcmp(key->data, pfx, pfxlen))
+	int r = mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, (MDB_val *)val, MDB_SET_RANGE);
+	if (DB_SUCCESS == r) {
+		if (key->size < pfxlen || memcmp(key->data, pfx, pfxlen))
 			r = DB_NOTFOUND;
 	}
 	return r;
 }
 
-int cursor_last_key(cursor_t cursor, buffer_t *key, uint8_t *pfx, const unsigned int pfxlen){
-	if(!cursor->prev)
+int
+cursor_first_key(cursor_t cursor, buffer_t *key,
+	uint8_t *pfx, const unsigned int pfxlen)
+{
+	if (!cursor->prev)
 		return MDB_BAD_TXN;
+	if (!pfx || !pfxlen)
+		return mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, NULL, MDB_FIRST);
+	key->size = pfxlen;
+	key->data = pfx;
+	int r = mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, NULL, MDB_SET_RANGE);
+	if (DB_SUCCESS == r) {
+		if (key->size < pfxlen || memcmp(key->data, pfx, pfxlen))
+			r = DB_NOTFOUND;
+	}
+	return r;
+}
 
-	if(!pfx || !pfxlen)
-		return mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, NULL, MDB_LAST);
-
+int
+cursor_last(cursor_t cursor, buffer_t *key, buffer_t *val,
+	uint8_t *pfx, const unsigned int pfxlen)
+{
+	if (!cursor->prev)
+		return MDB_BAD_TXN;
+	if (!pfx || !pfxlen)
+		return mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, (MDB_val *)val, MDB_LAST);
 	// clone key
 	uint8_t knext[pfxlen];
 	memcpy(knext, pfx, pfxlen);
@@ -152,22 +174,58 @@ int cursor_last_key(cursor_t cursor, buffer_t *key, uint8_t *pfx, const unsigned
 	}
 	// but if we wrapped all of the way around, examine last item
 	goto check_last;
-
 increased:
 	// seek to increased key
 	key->size = pfxlen;
 	key->data = knext;
 	r = mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, NULL, MDB_SET_RANGE);
-	if(DB_SUCCESS == r){
+	if (DB_SUCCESS == r) {
+		// and back up one
+		r = mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, (MDB_val *)val, MDB_PREV);
+	} else if (MDB_NOTFOUND == r) {
+check_last:
+		r = mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, (MDB_val *)val, MDB_LAST);
+	}
+	if (DB_SUCCESS == r)
+		if (key->size < pfxlen || memcmp(pfx, key->data, pfxlen))
+			r = MDB_NOTFOUND;
+	return r;
+}
+
+int
+cursor_last_key(cursor_t cursor, buffer_t *key,
+	uint8_t *pfx, const unsigned int pfxlen)
+{
+	if (!cursor->prev)
+		return MDB_BAD_TXN;
+	if (!pfx || !pfxlen)
+		return mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, NULL, MDB_LAST);
+	// clone key
+	uint8_t knext[pfxlen];
+	memcpy(knext, pfx, pfxlen);
+	int r;
+	unsigned int i = pfxlen;
+	while(i){
+		// increase to very next prefix
+		if(++knext[--i])
+			goto increased;
+	}
+	// but if we wrapped all of the way around, examine last item
+	goto check_last;
+increased:
+	// seek to increased key
+	key->size = pfxlen;
+	key->data = knext;
+	r = mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, NULL, MDB_SET_RANGE);
+	if (DB_SUCCESS == r) {
 		// and back up one
 		r = mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, NULL, MDB_PREV);
-	}else if(MDB_NOTFOUND == r){
+	} else if (MDB_NOTFOUND == r) {
 check_last:
 		r = mdb_cursor_get(CURSOR(cursor), (MDB_val *)key, NULL, MDB_LAST);
 	}
-
-	if(DB_SUCCESS == r)
-		if(key->size < pfxlen || memcmp(pfx, key->data, pfxlen))
+	if (DB_SUCCESS == r)
+		if (key->size < pfxlen || memcmp(pfx, key->data, pfxlen))
 			r = MDB_NOTFOUND;
 	return r;
 }
@@ -241,10 +299,11 @@ static INLINE void _cursor_cancel(cursor_t cursor){
 	cursor->prev = NULL;
 }
 
-void cursor_close(cursor_t cursor){
-	if(cursor->prev)
+void cursor_close(cursor_t cursor)
+{
+	if (cursor->prev)
 		_cursor_cancel(cursor);
-	if(cursor->release)
+	if (cursor->release)
 		free(cursor);
 }
 
@@ -682,14 +741,15 @@ int db_get_disksize(db_t db, size_t *size){
  * cursor-based iterators
  */
 
-int txn_iter_new(iter_t *iter, txn_t txn, int dbi, void *pfx, const unsigned int len){
+int txn_iter_new(iter_t *iter, txn_t txn, int dbi, void *pfx, const unsigned int len)
+{
 	*iter = smalloc(sizeof(**iter));
 	int r = errno;
-	if(*iter){
+	if (*iter) {
 		r = txn_iter_init(*iter, txn, dbi, pfx, len);
-		if(DB_SUCCESS == r){
+		if (DB_SUCCESS == r) {
 			(*iter)->release = 1;
-		}else{
+		} else {
 			free(*iter);
 			*iter = NULL;
 		}
@@ -697,22 +757,22 @@ int txn_iter_new(iter_t *iter, txn_t txn, int dbi, void *pfx, const unsigned int
 	return r;
 }
 
-int txn_iter_init(iter_t iter, txn_t txn, int dbi, void *pfx, const unsigned int len){
+int txn_iter_init(iter_t iter, txn_t txn, int dbi, void *pfx, const unsigned int len)
+{
 	int r = txn_cursor_init((cursor_t)iter, txn, dbi);
-	if(DB_SUCCESS == r){
+	if (DB_SUCCESS == r) {
 		iter->r = DB_SUCCESS;
 		iter->pfxlen = len;
 		iter->release = 0;
-		if(len){
-			iter->pfx = malloc(len);
-			if(!iter->pfx)
+		if (len) {
+			iter->pfx = smalloc(len);
+			if (!iter->pfx)
 				return errno;
-
 			memcpy(iter->pfx, pfx, len);
 			iter->key.data = iter->pfx;
 			iter->key.size = len;
 			iter->op = DB_SET_RANGE;
-		}else{
+		} else {
 			iter->pfx = NULL;
 			iter->op = DB_FIRST;
 		}
@@ -722,7 +782,8 @@ int txn_iter_init(iter_t iter, txn_t txn, int dbi, void *pfx, const unsigned int
 
 // if this succeeds, subsequent calls to iter_next() may still fail
 // if this fails, then subsequent calls to iter_next() will also fail
-int iter_seek(iter_t iter, void *pfx, const unsigned int len){
+int iter_seek(iter_t iter, void *pfx, const unsigned int len)
+{
 	struct buffer_t key = { .size = len, .data = pfx };
 	// advance cursor now, so we don't have to duplicate the pointer
 	iter->r = cursor_get((cursor_t)iter, &key, NULL, DB_SET_RANGE);
@@ -730,51 +791,53 @@ int iter_seek(iter_t iter, void *pfx, const unsigned int len){
 	return iter->r;
 }
 
-static INLINE int _iter_next(iter_t iter, const int data){
-	if(DB_SUCCESS != iter->r)
+static INLINE int _iter_next(iter_t iter, const int data)
+{
+	if (DB_SUCCESS != iter->r)
 		return iter->r;
-
 	// set/advance key
 	iter->r = cursor_get((cursor_t)iter, &(iter->key), NULL, iter->op);
 	iter->op = DB_NEXT;
-	if(DB_SUCCESS != iter->r)
+	if (DB_SUCCESS != iter->r)
 		return iter->r;
-
 	// possibly check pfx on updated key
-	if(iter->pfx && memcmp(iter->key.data, iter->pfx, iter->pfxlen))
+	if (iter->pfx && memcmp(iter->key.data, iter->pfx, iter->pfxlen))
 		return (iter->r = MDB_NOTFOUND);
-
 	// maybe grab data too
-	if(data)
+	if (data)
 		iter->r = cursor_get((cursor_t)iter, &(iter->key), &(iter->data), DB_GET_CURRENT);
 	return iter->r;
 }
 
-int iter_next(iter_t iter){
+int iter_next(iter_t iter)
+{
 	return _iter_next(iter, 1);
 }
 
-int iter_next_key(iter_t iter){
+int iter_next_key(iter_t iter)
+{
 	return _iter_next(iter, 0);
 }
 
-void iter_close(iter_t iter){
-	if(iter->pfx)
+void iter_close(iter_t iter)
+{
+	if (iter->pfx)
 		free(iter->pfx);
 	cursor_close((cursor_t)iter);
-	if(iter->release)
+	if (iter->release)
 		free(iter);
 }
 
 
-
-struct db_snapshot_t {
+struct
+db_snapshot_t {
 	db_t db;
 	int compact, ret, fds[2];
 	pthread_t thread;
 };
 
-int db_snapshot_to_fd(db_t db, int fd, int compact){
+int db_snapshot_to_fd(db_t db, int fd, int compact)
+{
 	int r;
 	pthread_mutex_lock(&db->mutex);
 	db->txns++;

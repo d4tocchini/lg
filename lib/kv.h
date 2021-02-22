@@ -1,3 +1,5 @@
+#ifndef _LG_KV_HEADER
+#define _LG_KV_HEADER
 
 // kv storage api - domains get mapped to stringIDs via the string storage layer
 // so do keys and values if LG_KV_MAP_KEYS or LG_KV_MAP_DATA are set
@@ -6,32 +8,148 @@
 // note - related kv & kv_iter objects share buffers - do not use concurrently from multiple threads
 
 #include "counter.h"
+#include "serdes.h"
 
 // kv flags
 #define LG_KV_RO       0x1
 #define LG_KV_MAP_KEYS 0x2
 #define LG_KV_MAP_DATA 0x4
 
+#define LG_KV_KEY_BUF_SIZE 511
+
+
+
 typedef struct
-ggkv_t {
+LG_bufs {
+	uint32_t len;
+	LG_buf*	 buf;
+} LG_bufs;
+
+#define LG_fifo LG_kv
+#define LG_pq LG_kv
+#define LG_ob LG_kv
+#define LG_kv_iter ggkv_iter_t
+
+typedef struct
+LG_kv {
 	ggtxn_t* txn;
-	buffer_t key, val;
+	LG_buf key;
+	LG_buf val;
 	int flags;
-	unsigned int refs, klen;
-	uint8_t kbuf[511];
-} ggkv_t;
+	uint32_t refs;
+	uint32_t klen;
+	uint8_t kbuf[LG_KV_KEY_BUF_SIZE];
+	// uint8_t vbuf[511];
+} LG_kv;
 
 typedef struct
 ggkv_iter_t {
-	struct iter_t iter;
-	ggkv_t* kv;
+	union {
+		struct iter_t iter;
+		struct { // NOTE: struct iter_t members replicated for iter.key/.val
+			struct cursor_t cursor;
+			LG_buf key;
+			union {
+				LG_buf val;
+				LG_buf data;
+			};
+			// void *pfx;
+			// unsigned int pfxlen;
+			// db_cursor_op op;
+			// int r;
+			// int release : 1;
+		};
+	};
+	LG_kv* kv;
 } ggkv_iter_t;
 
-void    ggkv_init(ggkv_t* kv, ggtxn_t* txn, LG_id domain_id, const int flags);
-int     ggkv_get(ggkv_t* kv, pod_t* key, pod_t* val);
+// kv
+void    lg_kv_init(LG_kv* kv, ggtxn_t* txn, LG_id domain_id, const int flags);
+void 	lg_kv_key(LG_kv* kv, LG_buf* key);
+int 	lg_kv_put(LG_kv* kv, LG_buf* val);
+int 	lg_kv_get(LG_kv* kv, LG_buf* val);
+int 	lg_kv_del(LG_kv* kv);
+int 	lg_kv_clear(LG_kv* kv); // => clear count
+int 	lg_kv_clear_pfx(LG_kv* kv, LG_buf* pfx); // => clear count
+int 	lg_kv_next(LG_kv* kv, LG_buf* key, LG_buf* val);
+int 	lg_kv_next_reset(LG_kv* kv);
+int 	lg_kv_first_key(LG_kv* kv, LG_buf* key);
+int 	lg_kv_last_key(LG_kv* kv, LG_buf* key);
+int 	lg_kv_empty(LG_kv* kv);
+
+#define lg_kv_key_reset(kv) \
+{ \
+	kv->key.data = kv->kbuf; \
+    kv->key.size = kv->klen; \
+}
+
+//TODO:
+int     ggkv_get(LG_kv* kv, pod_t* key, pod_t* val);
+
+// kv iterators
+int		lg_kv_iter(LG_kv* kv, LG_kv_iter* iter);
+int		lg_kv_iter_pfx(LG_kv* kv, LG_kv_iter* iter, LG_buf* pfx);
+bool	lg_kv_iter_next(LG_kv_iter* iter);
+// int 	lg_kv_iter_seek(LG_kv_iter* iter, LG_buf* key);
+void	lg_kv_iter_close(LG_kv_iter* iter);
+
+#define LG_KV_EACH(kv, iter, CODE) \
+	lg_kv_iter(kv, iter); \
+	while (lg_kv_iter_next(iter)) { \
+		CODE \
+	} \
+	lg_kv_iter_close(iter);
+
+#define LG_KV_EACH_PFX(kv, iter, pfx, CODE) \
+	lg_kv_iter_pfx(kv, iter, pfx); \
+	while (lg_kv_iter_next(iter)) { \
+		CODE \
+	} \
+	lg_kv_iter_close(iter);
+
+// // kv fifos
+void    lg_fifo_init(LG_kv* kv, ggtxn_t* txn, LG_id domain_id, const int flags);
+int 	lg_fifo_push(LG_kv* kv, LG_buf* val);
+int 	lg_fifo_push_n(LG_kv* kv, LG_buf* vals, const int n);
+int 	lg_fifo_push_uint(LG_kv* kv, LG_uint val);
+int 	lg_fifo_push_uint_n(LG_kv* kv, LG_uint* vals, const int n);
+int		lg_fifo_peek(LG_kv* kv, LG_buf* val);
+int		lg_fifo_peek_n(LG_kv* kv, LG_buf* vals, const int count);
+int		lg_fifo_peek_uint(LG_kv* kv, LG_uint* x);
+int		lg_fifo_peek_uint_n(LG_kv* kv, LG_uint* vals, const int count);
+int 	lg_fifo_pop(LG_kv* kv, LG_buf* val);
+int		lg_fifo_pop_n(LG_kv* kv, LG_buf* vals, const int count);
+int		lg_fifo_pop_uint(LG_kv* kv, LG_uint* val);
+int		lg_fifo_pop_uint_n(LG_kv* kv, LG_uint* vals, const int count);
+#define lg_fifo_del(kv)		lg_fifo_del_n(kv, 1)
+int 	lg_fifo_del_n(LG_kv* kv, const int count);
+int 	lg_fifo_len(LG_kv* kv, LG_uint* len);
+#define lg_fifo_empty(kv)	lg_kv_empty(kv)
+
+// // kv priority queues
+// int kv_pq_add(kv_t kv, void *key, size_t klen, uint8_t priority);
+// int kv_pq_get(kv_t kv, void *key, size_t klen);
+// int kv_pq_del(kv_t kv, void *key, size_t klen);
+// kv_iter_t kv_pq_iter(kv_t kv);
+// int kv_pq_iter_next(kv_iter_t iter, void **data, size_t *dlen);
+// uint8_t *kv_pq_cursor(kv_t kv, uint8_t priority);
+// int kv_pq_cursor_next(ggtxn_t* txn, uint8_t *cursor, void **key, size_t *klen);
+// void kv_pq_cursor_close(uint8_t *cursor);
+
+
+// void	lg_v_reset(LG_kv* kv);
+// void	lg_k_write_str(LG_kv* kv, const char* str);
+// void	lg_k_write_buf(LG_kv* kv, const char* buf, size_t len);
+// void	lg_k_write_uint(LG_kv* kv, const char* str);
+// void	lg_v_write_str(LG_kv* kv, const char* str);
+// void	lg_v_write_buf(LG_kv* kv, const char* buf, size_t len);
+// void	lg_v_write_uint(LG_kv* kv, uint64_t x);
+// void	lg_v_read_str(LG_kv* kv, const char* str);
+// void	lg_v_read_buf(LG_kv* kv, const char* buf, size_t* len);
+// void	lg_v_read_uint(LG_kv* kv, uint64_t* x);
 
 // (compat)
-typedef ggkv_t* kv_t;
+typedef LG_kv* kv_t;
 typedef ggkv_iter_t* kv_iter_t;
 // kv
 kv_t graph_kv(ggtxn_t* txn, const void *domain, const size_t dlen, const int flags);
@@ -68,7 +186,13 @@ uint8_t *kv_pq_cursor(kv_t kv, uint8_t priority);
 int kv_pq_cursor_next(ggtxn_t* txn, uint8_t *cursor, void **key, size_t *klen);
 void kv_pq_cursor_close(uint8_t *cursor);
 
-void ggkv_init(ggkv_t* kv, ggtxn_t* txn, LG_id domain_id, const int flags)
+
+
+#ifdef LG_IMPLEMENTATION
+
+
+
+void lg_kv_init(LG_kv* kv, ggtxn_t* txn, LG_id domain_id, const int flags)
 {
     kv->txn = txn;
     kv->flags = flags;
@@ -95,14 +219,14 @@ kv_t graph_kv(ggtxn_t* txn, const void *domain, const size_t dlen, const int fla
 	// kv->refs = 1;
 	// kv->klen = 0;
 	// encode(domainID, kv->kbuf, kv->klen);
-	ggkv_t* kv = NULL;
+	LG_kv* kv = NULL;
 	pod_t d = pod_buf(domain, dlen);
 	if ( !pod_resolve(txn, &d, (flags & LG_KV_RO)) )
         goto FAIL;
 	kv = smalloc(sizeof(*kv));
 	if (!kv)
 		goto FAIL;
-	ggkv_init(kv, txn, d.id, flags);
+	lg_kv_init(kv, txn, d.id, flags);
 	return kv;
 FAIL:
 	if(kv)
@@ -110,7 +234,283 @@ FAIL:
 	return NULL;
 }
 
-static INLINE int _ggkv_setup_key(ggkv_t* kv, void *key, size_t klen, int readonly)
+void
+lg_kv_key(LG_kv* kv, LG_buf* key)
+{
+	lg_kv_key_reset(kv);
+	assert(key && LG_KV_KEY_BUF_SIZE >= kv->key.size + key->size);
+	kv->key.size += key->size;
+	memcpy(&kv->kbuf[kv->klen], key->data, key->size);
+
+}
+
+int
+lg_kv_put(LG_kv* kv, LG_buf* val)
+{
+	// kv->val.size = val->size;
+	// kv->val.data = val->data;
+	// r = db_put((txn_t)kv->txn, DB_KV, &kv->key, &kv->val, 0);
+	int r = db_put((txn_t)kv->txn, DB_KV, &kv->key, val, 0);
+	return r;
+}
+
+int
+lg_kv_get(LG_kv* kv, LG_buf* val)
+{
+    int r = db_get((txn_t)kv->txn, DB_KV, &kv->key, val);
+	// if UNLIKELY(r != DB_SUCCESS) {
+	// 	val->size = 0;
+    // 	val->data = NULL;
+	// }
+    return r;
+}
+
+int
+lg_kv_del(LG_kv* kv)
+{
+	return db_del((txn_t)kv->txn, DB_KV, &kv->key, NULL);
+}
+
+int // => clear count
+lg_kv_clear(LG_kv* kv)
+{
+	int count = 0;
+	struct cursor_t cursor;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	LG_buf k;
+	r = cursor_first_key(&cursor, &k, NULL, 0);
+	while (DB_SUCCESS == r) {
+		cursor_del(&cursor, 0);
+		r = cursor_first_key(&cursor, &k, NULL, 0);
+		++count;
+	}
+	cursor_close(&cursor);
+	return count;
+}
+
+int // => clear count
+lg_kv_clear_pfx(LG_kv* kv, LG_buf* pfx)
+{
+	assert(pfx);
+	int count = 0;
+	struct cursor_t cursor;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	uint32_t len = kv->klen + pfx->size;
+	uint8_t buf[len];
+	memcpy(buf, kv->kbuf, kv->klen);
+	memcpy(buf + kv->klen, pfx->data, pfx->size);
+	LG_buf k;
+	r = cursor_first_key(&cursor, &k, buf, len);
+	while (DB_SUCCESS == r) {
+		cursor_del(&cursor, 0);
+		r = cursor_first_key(&cursor, &k, buf, len);
+		++count;
+	}
+	cursor_close(&cursor);
+	return count;
+}
+
+int
+lg_kv_next(LG_kv* kv, LG_buf* key, LG_buf* val)
+// void **key, size_t *klen, void **data, size_t *dlen
+{
+	int r;
+	int ret = 0;
+	LG_buf bmk = { .size = kv->klen, .data = kv->kbuf };
+	LG_buf pos;
+	struct cursor_t c;
+	txn_t txn = (txn_t)kv->txn;
+	r = txn_cursor_init(&c, txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	// try to fetch the bookmark from where we left off
+	r = db_get(txn, DB_KVBM, &bmk, &pos);
+	if (DB_SUCCESS == r) {
+		void *found = pos.data;
+		size_t flen = pos.size;
+		r = cursor_get(&c, &pos, NULL, DB_SET_RANGE);
+		// step forward if we found it exactly
+		if (DB_SUCCESS == r
+			&& flen == pos.size
+			&& memcmp(found, pos.data, flen) == 0 )
+		{
+			r = cursor_get(&c, &pos, NULL, DB_NEXT);
+		}
+		// if we've run off the end, set error status
+		if (DB_SUCCESS == r
+			&& (pos.size < kv->klen
+				|| memcmp(pos.data, bmk.data, kv->klen) ) )
+		{
+			r = DB_NOTFOUND;
+		}
+	}
+	// was there no bookmark?
+	// or did set_range fail?
+	// or did we run off the end?
+	if (DB_SUCCESS != r) {
+		// fall back to start of kv range
+		memcpy(&pos, &bmk, sizeof(bmk));
+		r = cursor_get(&c, &pos, NULL, DB_SET_RANGE);
+	}
+	// nothing to do?
+	if (DB_SUCCESS != r
+		|| pos.size < kv->klen
+		|| memcmp(pos.data, bmk.data, kv->klen) )
+	{
+		goto bail;
+	}
+	{
+		// stash a copy of the key
+		// FIXME: do we need to make a copy?
+		uint8_t kbuf[pos.size];
+		memcpy(kbuf, pos.data, pos.size);
+		// update the bookmark
+		r = db_put(txn, DB_KVBM, &bmk, &pos, 0);
+		if (DB_SUCCESS != r)
+			goto bail;
+		// now go and fetch actual key & data
+		pos.data = kbuf;
+		assert(pos.size >= kv->klen);
+		val->data = NULL;
+		r = cursor_get(&c, &pos, val, DB_SET_KEY);
+		assert(val->data);
+		if (DB_SUCCESS == r) {
+			// if (kv->flags & LG_KV_MAP_KEYS) {
+			// 	*key = graph_string_enc(kv->txn, pos.data + kv->klen, klen);
+			// } else {
+				key->size = pos.size - kv->klen;
+				key->data = pos.data + kv->klen;
+			// }
+			// if (kv->flags & LG_KV_MAP_DATA) {
+			// 	*data = graph_string_enc(kv->txn, val.data, dlen);
+			// } else {
+				// *data = val.data;
+				// *dlen = val.size;
+			// }
+			ret = 1;
+		}
+	}
+done:
+	cursor_close(&c);
+	return ret;
+
+bail:
+	ret = 0;
+	goto done;
+}
+
+int
+lg_kv_next_reset(LG_kv* kv)
+{
+	LG_buf bmk = { .size = kv->klen, .data = kv->kbuf };
+	int r = db_del((txn_t)kv->txn, DB_KVBM, &bmk, NULL);
+	r = (DB_SUCCESS == r || DB_NOTFOUND == r)
+		? DB_SUCCESS
+		: r;
+	return r;
+}
+
+int
+lg_kv_first_key(LG_kv* kv, LG_buf* key)
+{
+	struct cursor_t cursor;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	r = cursor_first_key(&cursor, key, kv->kbuf, kv->klen);
+	if LIKELY(DB_SUCCESS == r) {
+		key->size -= kv->klen;
+		key->data += kv->klen;
+	} // else { key->size = 0; key->data = NULL; }
+	cursor_close(&cursor);
+	return r;
+}
+
+int
+lg_kv_last_key(LG_kv* kv, LG_buf* key)
+{
+	struct cursor_t cursor;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	r = cursor_last_key(&cursor, key, kv->kbuf, kv->klen);
+	if LIKELY(DB_SUCCESS == r) {
+		key->size -= kv->klen;
+		key->data += kv->klen;
+	} // else { key->size = 0; key->data = NULL; }
+	cursor_close(&cursor);
+	return r;
+}
+
+int
+lg_kv_empty(LG_kv* kv)
+{
+	LG_buf key;
+	struct cursor_t cursor;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	r = cursor_first_key(&cursor, &key, kv->kbuf, kv->klen);
+	int empty = (DB_SUCCESS != r);
+	cursor_close(&cursor);
+	return empty;
+}
+
+int
+lg_kv_iter(kv_t kv, LG_kv_iter* iter)
+{
+	int r;
+	r = txn_iter_init((iter_t)iter, (txn_t)kv->txn, DB_KV, kv->kbuf, kv->klen);
+	if LIKELY(DB_SUCCESS == r) {
+		iter->kv = kv;
+		kv->refs++;
+	} else
+		errno = r;
+	return r;
+}
+
+int
+lg_kv_iter_pfx(kv_t kv, LG_kv_iter* iter, LG_buf* pfx)
+{
+	int r;
+	if LIKELY(pfx) {
+		assert((kv->flags & LG_KV_MAP_KEYS) == 0);//TODO:
+		uint8_t buf[kv->klen + pfx->size];
+		memcpy(buf, kv->kbuf, kv->klen);
+		memcpy(buf + kv->klen, pfx->data, pfx->size);
+		r = txn_iter_init((iter_t)iter, (txn_t)kv->txn, DB_KV, buf, kv->klen + pfx->size);
+	} else {
+		r = txn_iter_init((iter_t)iter, (txn_t)kv->txn, DB_KV, kv->kbuf, kv->klen);
+	}
+	if LIKELY(DB_SUCCESS == r) {
+		iter->kv = kv;
+		kv->refs++;
+	} else
+		errno = r;
+	return r;
+}
+
+bool
+lg_kv_iter_next(LG_kv_iter* iter)
+{
+	const bool ret = (DB_SUCCESS == iter_next((iter_t)iter));
+	if (ret) {
+		// clean kv domain from key
+		const uint32_t klen = iter->kv->klen;
+		iter->key.data += klen;
+		iter->key.size -= klen;
+	}
+	return ret;
+}
+
+void
+lg_kv_iter_close(LG_kv_iter* iter)
+{
+	--iter->kv->refs;
+	iter_close((iter_t)iter);
+}
+
+
+static INLINE int
+_ggkv_setup_key(LG_kv* kv, void *key, size_t klen, int readonly)
 {
     strID_t id;
     kv->key.data = kv->kbuf;
@@ -128,7 +528,7 @@ static INLINE int _ggkv_setup_key(ggkv_t* kv, void *key, size_t klen, int readon
 }
 
 
-int ggkv_get(ggkv_t* kv, pod_t* key, pod_t* val)
+int ggkv_get(LG_kv* kv, pod_t* key, pod_t* val)
 {
     val->id = 0;
     if (!_ggkv_setup_key(kv, key->data, key->size, 1))
@@ -172,15 +572,277 @@ void *kv_get(kv_t kv, void *key_data, size_t key_size, size_t *val_size)
 }
 
 
-// int ggkv_del(ggkv_t* kv, pod_t key)
-// {
 
-// }
+void
+lg_fifo_init(LG_kv* kv, ggtxn_t* txn, LG_id domain_id, const int flags)
+{
+	// TODO: flags |= LG_KV_FIFO
+	lg_kv_key_reset(kv);
+	lg_kv_init(kv, txn, domain_id, flags);
+}
 
-// int ggkv_put(ggkv_t* kv, pod_t key, pod_t* val)
-// {
+int
+lg_fifo_push(LG_kv* kv, LG_buf* val)
+{
+	return lg_fifo_push_n(kv, val, 1);
+}
 
-// }
+int // => count pushed / new length?
+lg_fifo_push_n(LG_kv* kv, LG_buf* vals, const int count)
+{
+	// lg_kv_key_reset(kv);
+	struct cursor_t cursor;
+	// int len = 0;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	r = cursor_last_key(&cursor, &kv->key, kv->kbuf, kv->klen);
+	if (DB_NOTFOUND == r) {
+		r = DB_SUCCESS;
+		kv->key.size = kv->klen + ctr_init(kv->kbuf + kv->klen);
+	} else if(DB_SUCCESS == r) {
+		memcpy(kv->kbuf, kv->key.data, kv->key.size);
+		kv->key.size = kv->klen + ctr_inc(kv->kbuf + kv->klen);
+	}
+	int i = 0;
+	kv->key.data = kv->kbuf;
+	while (DB_SUCCESS == r && i < count) {
+		if (i)
+			kv->key.size = kv->klen + ctr_inc(kv->kbuf + kv->klen);
+		r = cursor_put(&cursor, &kv->key, &vals[i], 0);
+		++i;
+	}
+	cursor_close(&cursor);
+	return i;
+}
+
+int
+lg_fifo_peek(LG_kv* kv, LG_buf* val)
+{
+	return lg_fifo_peek_n(kv, val, 1);
+}
+
+int
+lg_fifo_peek_n(LG_kv* kv, LG_buf* vals, const int count)
+{
+	// lg_kv_key_reset(kv);
+	struct cursor_t cursor;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	// const int resolve = kv->flags & (LG_KV_MAP_KEYS|LG_KV_MAP_DATA);
+	r = cursor_first_key(&cursor, &kv->key, kv->kbuf, kv->klen);
+	int i;
+	for (i = 0; DB_SUCCESS == r && i < count; i++) {
+		r = cursor_get(&cursor, &kv->key, &vals[i], DB_SET_KEY);
+		assert(DB_SUCCESS == r);
+		r = cursor_get(&cursor, &kv->key, NULL, DB_NEXT);
+		if (DB_SUCCESS != r
+			|| kv->key.size < kv->klen
+			|| memcmp(kv->key.data, kv->kbuf, kv->klen) )
+		{
+			r = DB_NOTFOUND;
+		}
+	}
+	if UNLIKELY(!( DB_SUCCESS == r || DB_NOTFOUND == r ))
+		errno = r;
+	cursor_close(&cursor);
+	return i;
+}
+
+int
+lg_fifo_pop(LG_kv* kv, LG_buf* val)
+{
+	return lg_fifo_pop_n(kv, val, 1);
+}
+
+int
+lg_fifo_pop_n(LG_kv* kv, LG_buf* vals, const int count)
+{
+
+	int n = lg_fifo_peek_n(kv, vals, count);
+	return kv_fifo_delete(kv, n);
+
+	// lg_kv_key_reset(kv);
+
+	// struct cursor_t cursor;
+	// int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	// assert(DB_SUCCESS == r);
+	// int i = 0;
+	// while (i < count) {
+	// 	// TODO: !!!!!!!!
+	// 	r = cursor_first(&cursor, &kv->key, &kv->val, kv->kbuf, kv->klen);
+	// 	// r = cursor_first_key(&cursor, &kv->key, kv->kbuf, kv->klen);
+	// 	if (DB_SUCCESS == r) {
+	// 		// r = cursor_get(&cursor, &kv->key, &kv->val, DB_SET_KEY);
+	// 		// assert(DB_SUCCESS == r);
+	// 		vals[i].size = kv->val.size;
+	// 		vals[i].data = kv->val.data;
+	// 		r = cursor_del(&cursor, 0);
+	// 		assert(DB_SUCCESS == r);
+	// 		++i;
+	// 	}
+	// 	else {
+	// 		if UNLIKELY(DB_NOTFOUND != r)
+	// 			errno = r;
+	// 		break;
+	// 	}
+	// }
+	// cursor_close(&cursor);
+	// return i;
+}
+
+
+int
+lg_fifo_push_uint(LG_kv* f, LG_uint x)
+{
+	return lg_fifo_push_uint_n(f, &x, 1);
+}
+
+int
+lg_fifo_push_uint_n(LG_kv* kv, LG_uint* x, const int count)
+{
+	// TODO: maybe chunk up large values of count !stackoverflow, for embedded?
+	struct cursor_t cursor;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	r = cursor_last_key(&cursor, &kv->key, kv->kbuf, kv->klen);
+	if (DB_NOTFOUND == r) {
+		r = DB_SUCCESS;
+		kv->key.size = kv->klen + ctr_init(kv->kbuf + kv->klen);
+	} else if(DB_SUCCESS == r) {
+		memcpy(kv->kbuf, kv->key.data, kv->key.size);
+		kv->key.size = kv->klen + ctr_inc(kv->kbuf + kv->klen);
+	}
+	int i = 0;
+	kv->key.data = kv->kbuf;
+	while (DB_SUCCESS == r && i < count) {
+		LG_buf buf = LG_UINT_BUF;
+        LG_ser val;
+		lg_ser_init(&val, &buf);
+		lg_ser_uint(&val, x[i]);
+		if (i)
+			kv->key.size = kv->klen + ctr_inc(kv->kbuf + kv->klen);
+		r = cursor_put(&cursor, &kv->key, &val, 0);
+		++i;
+	}
+	cursor_close(&cursor);
+	return i;
+}
+
+int
+lg_fifo_peek_uint(LG_kv* kv, LG_uint* x)
+{
+    return lg_fifo_peek_uint_n(kv, x, 1);
+}
+
+int
+lg_fifo_peek_uint_n(LG_kv* kv, LG_uint* vals, const int count)
+{
+	struct cursor_t cursor;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	r = cursor_first_key(&cursor, &kv->key, kv->kbuf, kv->klen);
+	int i;
+	for (i = 0; DB_SUCCESS == r && i < count; i++) {
+		LG_buf buf;
+		LG_des des;
+		r = cursor_get(&cursor, &kv->key, &buf, DB_SET_KEY);
+		assert(DB_SUCCESS == r);
+		lg_des_init(&des, &buf);
+		vals[i] = lg_des_uint(&des);
+		r = cursor_get(&cursor, &kv->key, NULL, DB_NEXT);
+		if (DB_SUCCESS != r
+			|| kv->key.size < kv->klen
+			|| memcmp(kv->key.data, kv->kbuf, kv->klen) )
+		{
+			r = DB_NOTFOUND;
+		}
+	}
+	if UNLIKELY(!( DB_SUCCESS == r || DB_NOTFOUND == r ))
+		errno = r;
+	cursor_close(&cursor);
+	return i;
+}
+
+int
+lg_fifo_pop_uint(LG_kv* kv, LG_uint* x)
+{
+    return lg_fifo_pop_uint_n(kv, x, 1);
+}
+
+int
+lg_fifo_pop_uint_n(LG_kv* kv, LG_uint* vals, const int count)
+{
+	struct cursor_t cursor;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	int i = 0;
+	while (i < count) {
+		LG_buf buf;
+		r = cursor_first(&cursor, &kv->key, &buf, kv->kbuf, kv->klen);
+		// r = cursor_first_key(&cursor, &kv->key, kv->kbuf, kv->klen);
+		if (DB_SUCCESS == r) {
+			LG_des des;
+			// r = cursor_get(&cursor, &kv->key, &buf, DB_SET_KEY); // assert(DB_SUCCESS == r);
+			lg_des_init(&des, &buf);
+			vals[i] = lg_des_uint(&des);
+			r = cursor_del(&cursor, 0);
+			assert(DB_SUCCESS == r);
+			++i;
+		}
+		else {
+			if UNLIKELY(DB_NOTFOUND != r)
+				errno = r;
+			break;
+		}
+	}
+	cursor_close(&cursor);
+	return i;
+}
+
+int
+lg_fifo_del_n(LG_kv* kv, const int count)
+{
+	struct cursor_t cursor;
+	int i = 0;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	r = cursor_first_key(&cursor, &kv->key, kv->kbuf, kv->klen);
+	while (DB_SUCCESS == r) {
+		r = cursor_del(&cursor, 0);
+		assert(DB_SUCCESS == r);
+		if (++i == count)
+			break;
+		r = cursor_first_key(&cursor, &kv->key, kv->kbuf, kv->klen);
+	}
+	if UNLIKELY(!( DB_SUCCESS == r || DB_NOTFOUND == r ))
+		errno = r;
+	cursor_close(&cursor);
+	return i;
+}
+
+int
+lg_fifo_len(LG_kv* kv, LG_uint* len)
+{
+	struct cursor_t cursor;
+	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	r = cursor_first_key(&cursor, &kv->key, kv->kbuf, kv->klen);
+	if (DB_SUCCESS == r) {
+		LG_buf key2;
+		int r2 = cursor_last_key(&cursor, &key2, kv->kbuf, kv->klen);
+		assert(DB_SUCCESS == r2);
+		*len = 1 + ctr_delta(key2.data + kv->klen, kv->key.data + kv->klen);
+	} else {
+		*len = 0;
+		if (DB_NOTFOUND == r)
+			r = DB_SUCCESS;
+		// else errno = r;
+	}
+	cursor_close(&cursor);
+	return r;
+}
+
+
 
 
 
@@ -215,7 +877,7 @@ done:
 
 
 
-static INLINE void *_kv_key(kv_t kv, buffer_t *key, size_t  *len, const int unmap){
+static INLINE void *_kv_key(kv_t kv, LG_buf *key, size_t  *len, const int unmap){
 	if(unmap)
 		return graph_string_enc(kv->txn, key->data + kv->klen, len);
 	*len = key->size - kv->klen;
@@ -226,7 +888,7 @@ void *kv_first_key(kv_t kv, size_t *klen){
 	struct cursor_t cursor;
 	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
 	assert(DB_SUCCESS == r);
-	buffer_t key;
+	LG_buf key;
 	void *ret = NULL;
 	r = cursor_first_key(&cursor, &key, kv->kbuf, kv->klen);
 	if(DB_SUCCESS == r)
@@ -239,7 +901,7 @@ void *kv_last_key(kv_t kv, size_t *klen){
 	struct cursor_t cursor;
 	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
 	assert(DB_SUCCESS == r);
-	buffer_t key;
+	LG_buf key;
 	void *ret = NULL;
 	r = cursor_last_key(&cursor, &key, kv->kbuf, kv->klen);
 	if(DB_SUCCESS == r)
@@ -263,7 +925,7 @@ int kv_clear_pfx(kv_t kv, uint8_t *pfx, unsigned int len){
 	assert(kv->klen + len <= sizeof(kv->kbuf));
 	memcpy(kv->kbuf + kv->klen, pfx, len);
 	len += kv->klen;
-	buffer_t k;
+	LG_buf k;
 	r = cursor_first_key(&cursor, &k, kv->kbuf, len);
 	while(DB_SUCCESS == r){
 		cursor_del(&cursor, 0);
@@ -374,7 +1036,7 @@ int kv_fifo_len(kv_t kv, uint64_t *len){
 	struct cursor_t cursor;
 	int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
 	assert(DB_SUCCESS == r);
-	buffer_t key2;
+	LG_buf key2;
 	r = cursor_first_key(&cursor, &kv->key, kv->kbuf, kv->klen);
 	if(DB_SUCCESS == r){
 		int r2 = cursor_last_key(&cursor, &key2, kv->kbuf, kv->klen);
@@ -625,7 +1287,7 @@ uint8_t *kv_pq_cursor(kv_t kv, uint8_t priority){
 // on error, return < 0
 int kv_pq_cursor_next(ggtxn_t* txn, uint8_t *cursor, void **key, size_t *klen){
 	int r;
-	buffer_t k, v;
+	LG_buf k, v;
 	struct cursor_t c;
 
 	const unsigned int domlen = enclen(cursor, 1);
@@ -732,15 +1394,15 @@ kv_iter_t kv_iter_pfx(kv_t kv, uint8_t *pfx, unsigned int len){
 }
 
 int kv_next_reset(kv_t kv){
-	buffer_t bmk = { .size = kv->klen, .data = kv->kbuf };
+	LG_buf bmk = { .size = kv->klen, .data = kv->kbuf };
 	int r = db_del((txn_t)kv->txn, DB_KVBM, &bmk, NULL);
 	return (DB_SUCCESS == r || DB_NOTFOUND == r);
 }
 
 int kv_next(kv_t kv, void **key, size_t *klen, void **data, size_t *dlen){
 	int r, ret = 0;
-	buffer_t bmk = { .size = kv->klen, .data = kv->kbuf };
-	buffer_t pos, val;
+	LG_buf bmk = { .size = kv->klen, .data = kv->kbuf };
+	LG_buf pos, val;
 	struct cursor_t c;
 	txn_t txn = (txn_t)kv->txn;
 
@@ -858,3 +1520,7 @@ void kv_iter_close(kv_iter_t iter){
 	kv_deref(iter->kv);
 	iter_close((iter_t)iter);
 }
+
+
+#endif
+#endif

@@ -197,8 +197,12 @@ typedef const struct {
 } dbi_t;
 
 typedef struct buffer_t {
-	size_t size;   // size of the data item
-	void  *data;   // address of the data item
+	size_t size;   	// size of the data item
+	union {
+		void* data; // address of the data item
+		uint8_t* u8;
+		char* 	 ch;
+	};
 } buffer_t;
 
 // base database object
@@ -237,7 +241,11 @@ struct cursor_t {
 // base iterator object
 struct iter_t {
 	struct cursor_t cursor;
-	buffer_t key, data;
+	buffer_t key;
+	union {
+		buffer_t val;
+		buffer_t data;
+	};
 	void *pfx;
 	unsigned int pfxlen;
 	db_cursor_op op;
@@ -304,7 +312,9 @@ int cursor_get(cursor_t cursor, buffer_t *key, buffer_t *data, db_cursor_op op);
 int cursor_put(cursor_t cursor, buffer_t *key, buffer_t *data, unsigned int flags);
 int cursor_del(cursor_t cursor, unsigned int flags);
 int cursor_count(cursor_t cursor, size_t *count);
+int cursor_first(cursor_t cursor, buffer_t *key, buffer_t *val, uint8_t *pfx, const unsigned int pfxlen);
 int cursor_first_key(cursor_t cursor, buffer_t *key, uint8_t *pfx, const unsigned int pfxlen);
+int cursor_last(cursor_t cursor, buffer_t *key, buffer_t *val, uint8_t *pfx, const unsigned int pfxlen);
 int cursor_last_key(cursor_t cursor, buffer_t *key, uint8_t *pfx, const unsigned int pfxlen);
 void cursor_close(cursor_t cursor);
 

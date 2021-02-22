@@ -30,19 +30,6 @@ char *graph_strerror(int err){
 	return db_strerror(err);
 }
 
-
-
-typedef struct txn_info_t * txn_info_t;
-struct txn_info_t{
-	txnID_t id;
-	logID_t start;
-	logID_t count;
-	uint64_t nodes;
-	uint64_t edges;
-};
-
-
-
 static INLINE uint8_t *__lookup(graph_txn_t txn, entry_t e, const int db_idx, uint8_t *kbuf, size_t klen, const logID_t beforeID){
 	struct cursor_t idx;
 	int r = txn_cursor_init(&idx, (txn_t)txn, db_idx);
@@ -775,12 +762,12 @@ graph_iter_t graph_edges(graph_txn_t txn, logID_t beforeID){
 
 static INLINE graph_iter_t _graph_nodes_edges_type(graph_txn_t txn, int dbi, void *type, size_t tlen, logID_t beforeID){
 	strID_t typeID;
-	uint8_t kbuf[esizeof(typeID)];
-	size_t klen = 0;
+	uint8_t pfx[esizeof(typeID)];
+	size_t pfxlen = 0;
 	graph_iter_t iter = NULL;
 	if(graph_string_lookup(txn, &typeID, type, tlen)){
-		encode(typeID, kbuf, klen);
-		iter = graph_iter_new(txn, dbi, kbuf, klen, beforeID);
+		encode(typeID, pfx, pfxlen);
+		iter = graph_iter_new(txn, dbi, pfx, pfxlen, beforeID);
 	}
 	return iter;
 }

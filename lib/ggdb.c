@@ -5,6 +5,14 @@
 #define _LGDB_HEADER
 
 
+typedef struct txn_info_t * txn_info_t;
+struct txn_info_t {
+	txnID_t id;
+	LG_log  start;
+	LG_log  count;
+	LG_size nodes;
+	LG_size edges;
+};
 
 
 // LG_id ggdb_next_id(ggtxn_t* txn, const int consume, LG_id * const cache, const int db1, const int venc);
@@ -110,10 +118,10 @@ int ggtxn_commit(ggtxn_t* txn)
 		memset(txn, 0, sizeof(*txn));
 	}else if(_ggtxn_update_info(txn) && txn->next_logID > txn->begin_nextID){
 		// write txn w/ valid txnlog table
-		logID_t nextID = txn->begin_nextID;
-		logID_t count = txn->next_logID - nextID;
-		uint64_t nodes = txn->prev_nodes + txn->node_delta;
-		uint64_t edges = txn->prev_edges + txn->edge_delta;
+		LG_log  nextID = txn->begin_nextID;
+		LG_log  count = txn->next_logID - nextID;
+		LG_size nodes = txn->prev_nodes + txn->node_delta;
+		LG_size edges = txn->prev_edges + txn->edge_delta;
 		uint8_t kbuf[esizeof(txnID) + esizeof(nextID) + esizeof(count)];
 		uint8_t dbuf[esizeof(nodes) + esizeof(edges)];
 		buffer_t key = { 0, kbuf }, data = { 0, dbuf };
@@ -402,7 +410,7 @@ static INLINE int _ggtxn_update_info(ggtxn_t* txn)
 		int r = txn_cursor_init(&c, (txn_t)txn, DB_TXNLOG);
 		assert(DB_SUCCESS == r);
 		r = cursor_get(&c, NULL, NULL, DB_LAST);
-		if(DB_SUCCESS == r){
+		if (DB_SUCCESS == r) {
 			buffer_t data, key;
 			r = cursor_get(&c, &key, &data, DB_GET_CURRENT);
 			assert(DB_SUCCESS == r);
@@ -411,22 +419,135 @@ static INLINE int _ggtxn_update_info(ggtxn_t* txn)
 			decode(txn->prev_start, key.data, i);
 			decode(txn->prev_count, key.data, i);
 			assert(i == key.size);
-
 			i = 0;
 			decode(txn->prev_nodes, data.data, i);
 			decode(txn->prev_edges, data.data, i);
 			assert(i == data.size);
-		}else if(DB_NOTFOUND == r){
+		} else if (DB_NOTFOUND == r) {
 			txn->prev_start = 1; // fudged to make the return statement easy
 			txn->prev_id = txn->prev_count = 0;
 			txn->prev_nodes = txn->prev_edges = 0;
-		}else{
+		} else {
 			assert(DB_SUCCESS == r);
 		}
 		cursor_close(&c);
 	}
 	return txn->prev_start + txn->prev_count == txn->begin_nextID;
 }
+
+/*
+    ZZZ: _find_txn
+*/
+static INLINE int
+_lg_txn_info_read(LG_txn* txn, txn_info_t info, LG_log b4)
+{
+	assert(b4 && b4 <= txn->next_logID);
+	const LG_log stop = b4 - 1;
+
+	uint8_t kbuf[esizeof(txnID_t) + esizeof(LG_log) + esizeof(LG_log)];
+	buffer_t data;
+    buffer_t key = { 0, kbuf };
+	// encode magic to query by logID
+	encode(0, kbuf, key.size);
+	encode(1, kbuf, key.size);
+	encode(stop, kbuf, key.size);
+	struct cursor_t c;
+	int r = txn_cursor_init(&c, (txn_t)txn, DB_TXNLOG);
+	assert(DB_SUCCESS == r);
+	r = cursor_get(&c, &key, &data, DB_SET_KEY);
+	size_t i;
+	if (DB_SUCCESS == r) {
+    // TODO: use while instead of goto for WASM
+again:
+		i = 0;
+		decode(info->id, key.data, i);
+		decode(info->start, key.data, i);
+		decode(info->count, key.data, i);
+		assert(key.size == i);
+		if (info->start + info->count <= b4) {
+			i = 0;
+			decode(info->nodes, data.data, i);
+			decode(info->edges, data.data, i);
+			assert(data.size == i);
+			info->start = info->start + info->count;
+		} else if (info->id > 1) {
+			r = cursor_get(&c, &key, &data, DB_PREV);
+			assert(DB_SUCCESS == r);
+			goto again;
+		} else {
+			info->start = 1;
+			info->count = 0;
+			info->nodes = 0;
+			info->edges = 0;
+		}
+		r = DB_SUCCESS;
+	} else if (_ggtxn_update_info(txn)) {
+//		info->id = txn->prev_id;
+		info->start = txn->prev_start + txn->prev_count;
+//		info->count = txn->next_logID - info->start;
+		info->nodes = txn->prev_nodes;
+		info->edges = txn->prev_edges;
+		r = DB_SUCCESS;
+	}
+	cursor_close(&c);
+
+    // ZZZ: void _nodes_edges_delta(graph_txn_t txn, txn_info_t info, logID_t beforeID)
+    if (DB_SUCCESS == r) {
+        LG_log id = info->start;
+        if (id == b4)
+            return r;
+        LG_size nodes = info->nodes;
+        LG_size edges = info->edges;
+        struct cursor_t c;
+        int r = txn_cursor_init(&c, (txn_t)txn, DB_LOG);
+        assert(DB_SUCCESS == r);
+        uint8_t kbuf[esizeof(id)];
+        buffer_t data;
+        buffer_t key = { 0, &kbuf };
+        encode(id, kbuf, key.size);
+        r = cursor_get(&c, &key, &data, DB_SET_KEY);
+        assert(DB_SUCCESS == r);
+        while (1) {
+            uint8_t rectype = *(uint8_t *)data.data;
+            int i = 0;
+            decode(id, key.data, i);
+            if (GRAPH_NODE == rectype) {
+                nodes++;
+            } else if (GRAPH_EDGE == rectype) {
+                edges++;
+            } else if (GRAPH_DELETION == rectype) {
+                buffer_t d2;
+                buffer_t k2 = {
+                    enclen((uint8_t *)data.data, 1), 1 + (uint8_t *)data.data
+                };
+                r = db_get((txn_t)txn, DB_LOG, &k2, &d2);
+                assert(DB_SUCCESS == r);
+                rectype = *(uint8_t *)d2.data;
+                if (GRAPH_NODE == rectype) {
+                    LG_Iter it; // TODO: OPTIM: recycle iterator
+                    lg_edges(txn, &it, id); // TODO: ? shouldn't this be lg_node_edges?
+                    while (lg_iter_next(&it)) {
+                        edges--;
+                    }
+                    lg_iter_close(&it);
+                    nodes--;
+                } else if (GRAPH_EDGE == rectype) {
+                    edges--;
+                }
+            }
+            if (++id == b4)
+                break;
+            r = cursor_get(&c, &key, &data, DB_NEXT);
+            assert(DB_SUCCESS == r);
+        }
+        cursor_close(&c);
+        info->nodes = nodes;
+        info->edges = edges;
+    }
+
+	return r;
+}
+
 
 /*
     ZZZ: uint8_t *__lookup(graph_txn_t txn, entry_t e, const int db_idx, uint8_t *kbuf, size_t klen, const logID_t beforeID)
