@@ -3,9 +3,9 @@
 
 #include "lg.h"
 
-typedef ggraph_t* graph_t;
-typedef ggtxn_t* graph_txn_t;
-typedef ggiter_t* graph_iter_t;
+typedef LG_graph* graph_t;
+typedef LG_txn* graph_txn_t;
+typedef LG_iter* graph_iter_t;
 typedef ggentry_t* entry_t;
 typedef ggentry_t* deletion_t;
 typedef ggnode_t* node_t;

@@ -12,6 +12,8 @@
 #define LG_UINT_N_DATA(n) (uint8_t[9*(n)]){}
 #define LG_UINT_N_BUF(n) (LG_buf){.size=LG_UINT_N_SIZE(n), .data=LG_UINT_DATA}
 
+#define LG_BUF_INIT(n) (LG_buf){.size=(n), .data=(void*)(uint8_t[(n)]){}}
+
 
 // provide type-agnostic clz wrapper, and return a more useful value for clz(0)
 #define __clz_wrapper(x) \
@@ -117,9 +119,9 @@ LG_uint lg_des_uint(LG_des* des);
 	encode(x, (ser)->data, (ser)->len);
 
 
-
-// ============================================================================
+//============================================================================
 #ifdef LG_IMPLEMENTATION
+//============================================================================
 
 
 int
@@ -187,8 +189,7 @@ LG_uint lg_des_uint(LG_des* des)
 // 	len += n;
 // 	buf->size += len;
 // 	return len;
-// }
-
+//
 
 int
 pack_uint(uint64_t i, char *buffer)
@@ -244,6 +245,7 @@ unpack_uints2(int count, uint64_t *ints, void *buffer, size_t buflen)
 }
 
 
-
 #endif
+
+
 #endif

@@ -14,7 +14,7 @@
 LG_node n_data[3];
 LG_edge e_data[2];
 
-void load_data(ggtxn_t* txn)
+void load_data(LG_txn* txn)
 {
     LG_node* n = n_data;
     LG_edge* e = e_data;
@@ -44,7 +44,7 @@ void load_data(ggtxn_t* txn)
 //     LG_prop_desc props[];
 // } LG_graph_batch;
 
-// void load_batch(ggtxn_t* txn)
+// void load_batch(LG_txn* txn)
 // {
 //     lg_graph_batch_load(&(LG_graph_batch){
 //         .nodes = {
@@ -82,13 +82,8 @@ void load_data(ggtxn_t* txn)
 
 int main(int argc, char** argv)
 {
-    SUITE__(hello,
-        TEST__( world,
-            EQ__(1,1)
-            // EQ__(1,0)
-        )
-    )
-    SUITE__(lg,
+    SUITE__(serdes,
+
         TEST__(lg_serdes_uint,
             LG_buf buf = LG_UINT_BUF;
             LG_ser ser;
@@ -118,6 +113,7 @@ int main(int argc, char** argv)
                 ++i;
             }
         )
+
         TEST__(lg_serdes_n_uint,
             LG_buf buf = LG_UINT_N_BUF(3);
             LG_ser ser;
@@ -134,25 +130,75 @@ int main(int argc, char** argv)
             EQ__(x2, lg_des_uint(&des));
             EQ__(x3, lg_des_uint(&des));
         )
-        TEST__(lg_init,
-            lg_init(".gg/");
-            printf("    basepath = %s\n",ggctx.basepath);
-            EQ__(ggctx.basepath_len,4)
+
+        TEST__(test_msgpack,
+            LG_pack p;
+            LG_buf buf = LG_BUF_INIT(20);
+            lg_pack_init(&p, &buf);
+            lg_pack_map_size(&p, 2);
+            lg_pack_str(&p, "compact");
+            lg_pack_bool(&p, true);
+            lg_pack_str(&p, "schema");
+            lg_pack_uint(&p, 0);
+            lg_pack_get_buf(&p, &buf);
+            assert(! p.return_code);
+            assert(18 == buf.size);
+
+            LG_unpack u;
+            lg_unpack_init(&u, &buf);
+            assert(2 == lg_unpack_map_size(&u) ) ;
+            assert(7 == lg_unpack_str_len(&u) ) ;
+            assert(0 == strncmp("compact", u.item.as.str.start, 7) ) ;
+            assert(true == lg_unpack_bool(&u) ) ;
+            assert(6 == lg_unpack_str_len(&u) ) ;
+            assert(0 == strncmp("schema", u.item.as.str.start, 6) ) ;
+            assert(0 == lg_unpack_i32(&u) ) ;
+            assert(true == lg_unpack_at_end(&u)) ;
+            assert(! u.return_code) ;
+            lg_unpack_next(&u);
+            assert (CWP_RC_END_OF_INPUT == u.return_code) ;
+
+            lg_unpack_init(&u, &buf);
+            char* str;
+            size_t len;
+            assert(2 == lg_unpack_map_size(&u)) ;
+            assert(7 == (len = lg_unpack_str(&u, &str))) ;
+            assert(0 == strncmp("compact", str, len)) ;
+            assert(true == lg_unpack_bool(&u)) ;
+            assert(6 == (len = lg_unpack_str(&u, &str))) ;
+            assert(0 == strncmp("schema", str, 6)) ;
+            assert(false == lg_unpack_at_end(&u)) ;
+            assert(0 == lg_unpack_i32(&u)) ;
+            assert(true == lg_unpack_at_end(&u)) ;
+            assert(! u.return_code) ;
+            lg_unpack_next(&u);
+            assert(CWP_RC_END_OF_INPUT == u.return_code) ;
         )
     )
 
-    ggraph_t g;
 
-    #undef  TEST__BEFORE
-    #define TEST__BEFORE    lg_open(&g, "test", 0);
-    #undef  TEST__AFTER
-    #define TEST__AFTER     lg_rm(&g);
+
+
 
     SUITE__( graph_suite,
-        TEST__( test_open_then_rm,
-        {
-            // nothing
-        })
+
+        LG_graph g;
+
+        TEST__(lg_init,
+            lg_init(".gg/");
+            // printf("\n    basepath = %s\n",ggctx.basepath);
+            EQ__(ggctx.basepath_len,4)
+            // ensure fresh graph test dir
+            lg_open(&g, "test", 0);
+            lg_rm(&g);
+        )
+
+        #undef  TEST__BEFORE
+        #define TEST__BEFORE    lg_open(&g, "test", 0);
+        #undef  TEST__AFTER
+        #define TEST__AFTER     lg_rm(&g);
+
+
         TEST__( test_commit,
         {
             LG_node n;
@@ -169,6 +215,7 @@ int main(int argc, char** argv)
                 assert(false);
             )
         })
+
         TEST__( test_abort,
         {
             LG_node n;
@@ -183,6 +230,7 @@ int main(int argc, char** argv)
                 EQ__(log_next_(), 1);
             )
         })
+
         TEST__( test_read,
         {
             LG_node n;
@@ -213,6 +261,7 @@ int main(int argc, char** argv)
                 EQ__(log_next_(), 2);
             )
         })
+
         TEST__( test_load_and_count,
         {
             LG_WRITE(&g,
@@ -247,6 +296,7 @@ int main(int argc, char** argv)
                 EQ__(edges_count_(), 2+DATA_EDGE_COUNT);
             )
         })
+
         TEST__( test_counts,
         {
             LG_node n1;
@@ -277,6 +327,7 @@ int main(int argc, char** argv)
                 EQ__(nodes_count_b4_(log_last_()), 3);
             )
         })
+
         TEST__( test_node_edges_by_type,
         {
             LG_WRITE(&g,
@@ -289,7 +340,7 @@ int main(int argc, char** argv)
                 LG_edge* e = e_data;
                 EQ__(n[0], 1);
 
-                LG_Iter it;
+                LG_iter it;
                 // all_edges = sum(1 for x in n1.iterlinks())
                 node_edges_in_(&it, n[1]);
                     while (lg_iter_next(&it)) {++all_edges;}
@@ -323,27 +374,40 @@ int main(int argc, char** argv)
                 EQ__(type1_edges, 1);
             )
         })
-        TEST__skip( test_edge_dirs,
+
+        TEST__( test_edge_dirs,
         {
             LG_WRITE(&g,
                 load_data(txn);
             )
             LG_READ(&g,
-            /*
-                n1 = node(1)
-                n1 = txn.node(**n1)
-                all_edges = set(e.ID for e in n1.edges)
-                out_edges = set(e.ID for e in n1.edges(dir="out"))
-                in_edges = set(e.ID for e in n1.edges(dir="in"))
-                self.assertTrue(all_edges)
-                self.assertTrue(out_edges)
-                self.assertTrue(in_edges)
-                self.assertTrue(all_edges - in_edges)
-                self.assertTrue(all_edges - out_edges)
-                self.assertTrue(in_edges.isdisjoint(out_edges))
-            */
+                LG_iter it;
+                int e_count = 0;
+                int in_count = 0;
+                int out_count = 0;
+                LG_edge e_in;
+                LG_edge e_out;
+                node_edges_in_(&it, n_data[1]);
+                LG_FOR_EACH(&it, e,
+                    e_in = e;
+                    ++e_count;
+                    ++in_count;
+                )
+                node_edges_out_(&it, n_data[1]);
+                LG_FOR_EACH(&it, e,
+                    e_out = e;
+                    ++e_count;
+                    ++out_count;
+                )
+                assert(2 == e_count);
+                assert(1 == in_count);
+                assert(1 == out_count);
+                EQ__(e_in, e_data[0]);
+                EQ__(e_out, e_data[1]);
+                assert(e_out != e_in && e_out && e_in);
             )
         })
+
         TEST__skip( test_query,
         {
             LG_WRITE(&g,
@@ -358,6 +422,22 @@ int main(int argc, char** argv)
             */
             )
         })
+
+        TEST__skip( test_algos,
+        {
+            LG_WRITE(&g,
+                load_data(txn);
+            )
+            LG_READ(&g,
+            /*
+                chains = 0
+                for _ in txn.query("n(type='foo')->e()-n()"):
+                chains += 1
+                self.assertTrue(chains)
+            */
+            )
+        })
+
         TEST__( test_graph_props,
         {
             LG_WRITE(&g,
@@ -383,6 +463,7 @@ int main(int argc, char** argv)
                 OK__( pw.id && pw.val && pw.id == pr.id && pw.val == pr.val );
             )
         })
+
         TEST__( test_kv_basic,
         {
             LG_kv kv;
@@ -414,6 +495,7 @@ int main(int argc, char** argv)
                 EQ__(0, memcmp( "fon", val.data, val.size));
             )
         })
+
         TEST__( test_kv_pfx,
         {
             LG_kv kv;
@@ -485,6 +567,7 @@ int main(int argc, char** argv)
                 EQ__(i, 0);
             )
         })
+
         TEST__( test_kv_next,
         {
             LG_kv kv;
@@ -551,6 +634,7 @@ int main(int argc, char** argv)
                 assert(lg_buf_eq_safe(&val, &vals[i]));
             )
         })
+
         TEST__(test_fifo_buf_api,
         {
             LG_WRITE(&g,
@@ -630,6 +714,7 @@ int main(int argc, char** argv)
                 )
             )
         })
+
         TEST__(test_fifo_uint_api,
         {
             LG_kv fifo;
@@ -668,5 +753,171 @@ int main(int argc, char** argv)
                 )
             )
         })
+
+        TEST__(test_pq,
+        {
+            LG_kv pq;
+            int n = 5;
+            char ret[6] = {};
+            LG_buf val = LG_BUF_INIT(1);
+            LG_pq_iter it;
+            LG_WRITE(&g,
+                lg_pq_init(&pq, txn, str_("foo"), 0);
+                SHOULD__("pq add",
+                    val.ch[0] = 'c'; lg_pq_add(&pq, &val, 2);
+                    val.ch[0] = 'd'; lg_pq_add(&pq, &val, 1);
+                    val.ch[0] = 'a'; lg_pq_add(&pq, &val, 4);
+                    val.ch[0] = 'e'; lg_pq_add(&pq, &val, 1);
+                    val.ch[0] = 'b'; lg_pq_add(&pq, &val, 3);
+                )
+            )
+            LG_READ(&g,
+                lg_pq_init(&pq, txn, str_("foo"), 0);
+                SHOULD__("pq each",
+                    int i = 0;
+                    uint8_t p[n];
+                    LG_PQ_EACH(&pq, &it,
+                        assert(0 == lg_pq_get(&pq, &it.val, &p[i]) );
+                        ret[i++] = it.val.ch[0];
+                    )
+                    ret[i] = '\0';
+                    assert(0 == strcmp("abcde", ret));
+                    assert(0 == memcmp((uint8_t[]){4,3,2,1,1}, p, n));
+                )
+            )
+            LG_WRITE(&g,
+                lg_pq_init(&pq, txn, str_("foo"), 0);
+                SHOULD__("re-add same priority pushes back",
+                    val.ch[0] = 'd'; lg_pq_add(&pq, &val, 1);
+                    int i = 0;
+                    LG_PQ_EACH(&pq, &it,
+                        ret[i++] = it.val.ch[0];
+                    )
+                    ret[i] = '\0';
+                    assert(0 == strcmp("abced", ret));
+                )
+                SHOULD__("change priority",
+                    val.ch[0] = 'd'; lg_pq_add(&pq, &val, 4);
+                    int i = 0;
+                    LG_PQ_EACH(&pq, &it,
+                        ret[i++] = it.val.ch[0];
+                    )
+                    ret[i] = '\0';
+                    assert(0 == strcmp("adbce", ret));
+                )
+                SHOULD__("delete 1",
+                    val.ch[0] = 'b'; lg_pq_del(&pq, &val);
+                    int i = 0;
+                    LG_PQ_EACH(&pq, &it,
+                        ret[i++] = it.val.ch[0];
+                    )
+                    ret[i] = '\0';
+                    assert(0 == strcmp("adce", ret));
+                )
+                SHOULD__("clear",
+                    assert(false == lg_pq_empty(&pq));
+                    lg_pq_clear(&pq);
+                    assert(true == lg_pq_empty(&pq));
+                    LG_PQ_EACH(&pq, &it,
+                        assert(false);
+                    )
+                )
+            )
+        })
+
+        TEST__(test_pq_cursor,
+        {
+            LG_kv pq;
+            LG_pq_cursor pqc;
+            int i = 0;
+            int n = 5;
+            char ret[6] = {};
+            uint8_t p[n];
+            LG_buf val = LG_BUF_INIT(1);
+            LG_WRITE(&g,
+                lg_pq_init(&pq, txn, str_("foo"), 0);
+                SHOULD__("init",
+                    lg_pq_cursor_init(&pq, &pqc, 255);
+                    val.ch[0] = 'c'; lg_pq_add(&pq, &val, 2);
+                    val.ch[0] = 'd'; lg_pq_add(&pq, &val, 1);
+                    val.ch[0] = 'a'; lg_pq_add(&pq, &val, 4);
+                    val.ch[0] = 'e'; lg_pq_add(&pq, &val, 0);
+                    val.ch[0] = 'b'; lg_pq_add(&pq, &val, 3);
+                )
+            )
+            while (i < n) {
+                LG_READ(&g,
+                    SHOULD__("iterate",
+                        assert(true == lg_pq_cursor_next(txn, &pqc, &val, &p[i]) );
+                        ret[i++] = val.ch[0];
+                    )
+                )
+            }
+            SHOULD__("correct order",
+                assert(0 == strcmp("abcde", ret));
+                assert(0 == memcmp((uint8_t[]){4,3,2,1,0}, p, n));
+            )
+            LG_WRITE(&g,
+                SHOULD__("done iterate",
+                    assert(false == lg_pq_cursor_next(txn, &pqc, &val, &p[0]) );
+                )
+            )
+        })
+
+        TEST__skip(test_nested,
+        {
+            // with self.g.transaction(write=True) as t0:
+            //     t0['foo'] = "t0"
+            //     with t0.transaction(write=True) as t1:
+            //         t1['foo'] = "t1"
+            //         with t1.transaction(write=True) as t2:
+            //             self.assertTrue(t2['foo'] == "t1")
+            //             t2['foo'] = "t2"
+            //             self.assertTrue(t2['foo'] == "t2")
+            //             t1.abort()
+            //         # should never get here
+            //         self.assertTrue(False)
+            //     self.assertTrue(t0['foo'] == "t0")
+            //     t0['foo'] = "t00"
+            // with self.g.transaction(write=True) as t0:
+            //     self.assertTrue(t0['foo'] == "t00")
+            //     t0['foo'] = "t000"
+            //     with t0.transaction(write=True) as t1:
+            //         t1['foo'] = "t1"
+            //         t0.commit()
+            //         # should never get here
+            //         self.assertTrue(False)
+            //     # or here
+            //     self.assertTrue(False)
+            // with self.g.transaction(write=True) as t0:
+            //     self.assertTrue(t0['foo'] == "t000")
+        })
+
+        TEST__skip(test_reset,
+        {
+            // with self.g.transaction(write=True) as txn:
+            //     txn.node(type="foo", value="bar")
+            //     nextID = txn.nextID
+            // with self.g.transaction(write=True) as txn:
+            //     self.assertEqual(nextID, txn.nextID)
+            //     txn.reset()
+            //     self.assertEqual(1, txn.nextID)
+            // with self.g.transaction(write=False) as txn:
+            //     self.assertEqual(1, txn.nextID)
+        })
+
+        TEST__skip(test_reset,
+        {
+            // with self.g.transaction(write=True) as txn:
+            //     txn.node(type="foo", value="bar")
+            //     nextID = txn.nextID
+            // with self.g.transaction(write=True) as txn:
+            //     self.assertEqual(nextID, txn.nextID)
+            //     txn.reset()
+            //     self.assertEqual(1, txn.nextID)
+            // with self.g.transaction(write=False) as txn:
+            //     self.assertEqual(1, txn.nextID)
+        })
+
     )
 }

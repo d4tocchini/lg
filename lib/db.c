@@ -349,14 +349,16 @@ int txn_commit(txn_t txn){
 	return txn_end(txn, 0);
 }
 
-int db_txn_new(txn_t *txn, db_t db, txn_t parent, int flags){
+int
+db_txn_new(txn_t *txn, db_t db, txn_t parent, int flags)
+{
 	*txn = smalloc(sizeof(struct txn_t));
 	int r = errno;
-	if(*txn){
+	if (*txn) {
 		r = db_txn_init(*txn, db, parent, flags);
-		if(DB_SUCCESS == r){
+		if (DB_SUCCESS == r) {
 			(*txn)->release = 1;
-		}else{
+		} else {
 			free(*txn);
 			*txn = NULL;
 		}
@@ -366,7 +368,9 @@ int db_txn_new(txn_t *txn, db_t db, txn_t parent, int flags){
 
 static INLINE int _txn_begin(db_t db, MDB_txn *parent, unsigned int flags, MDB_txn **txn);
 
-int db_txn_init(txn_t txn, db_t db, txn_t parent, int flags){
+int
+db_txn_init(txn_t txn, db_t db, txn_t parent, int flags)
+{
 	txn->db = db;
 	txn->parent = parent;
 	txn->head = NULL;
@@ -374,35 +378,44 @@ int db_txn_init(txn_t txn, db_t db, txn_t parent, int flags){
 	txn->rw = !txn->ro;
 	txn->updated = 0;
 	txn->release = 0;
-	return _txn_begin(db, parent ? parent->txn : NULL, flags, (MDB_txn **)&txn->txn);
+	return _txn_begin(db, (parent) ? parent->txn : NULL,
+		flags, (MDB_txn **)&txn->txn);
 }
 
-int db_sync(db_t db, int force){
+int
+db_sync(db_t db, int force)
+{
 	int r = mdb_env_sync((MDB_env *)db->env, force);
 	// lmdb refuses to sync envs opened with mdb_readonly
 	// I am not bothering with figuring out if fdatasync is broken on your platform
-	if(EACCES == r)
+	if (EACCES == r)
 		r = FDATASYNC(db->fd);
 	return r;
 }
 
-int db_updated(db_t db){
+int
+db_updated(db_t db)
+{
 	return db->updated;
 }
 
-int db_size(db_t db, size_t *size){
+int
+db_size(db_t db, size_t *size)
+{
 	struct stat st;
 	int r = fstat(db->fd, &st);
 	*size = st.st_size;
 	return r;
 }
 
-static INLINE int _mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **txn){
+static INLINE int
+_mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **txn)
+{
 	int r = mdb_txn_begin(env, parent, flags, txn);
-	if(MDB_READERS_FULL == r){
+	if (MDB_READERS_FULL == r) {
 		int r2, dead;
 		r2 = mdb_reader_check(env, &dead);
-		if(DB_SUCCESS == r2)
+		if (DB_SUCCESS == r2)
 			fprintf(stderr, "%d: mdb_reader_check released %d stale entries\n", (int)getpid(), dead);
 		else
 			fprintf(stderr, "%d: mdb_reader_check: %s (%d)\n", (int)getpid(), mdb_strerror(r2), r2);
@@ -411,65 +424,66 @@ static INLINE int _mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int fla
 	return r;
 }
 
-static INLINE int _do_resize(db_t db, size_t size){
-	while(db->txns)
+static INLINE int
+_do_resize(db_t db, size_t size)
+{
+	while (db->txns)
 		pthread_cond_wait(&db->cond, &db->mutex);
 	return mdb_env_set_mapsize((MDB_env *)db->env, size);
 }
 
-static INLINE int _auto_resize(db_t db){
+static INLINE int
+_auto_resize(db_t db)
+{
 	MDB_envinfo info;
 	size_t size;
-
 	int r = db_size(db, &size);
-	if(DB_SUCCESS != r)
-		goto done;
-
+	if UNLIKELY(DB_SUCCESS != r)
+		return r;
 	r = mdb_env_info((MDB_env *)db->env, &info);
-	if(DB_SUCCESS != r)
-		goto done;
-
-	if(size + db->padsize > info.me_mapsize){
+	if UNLIKELY(DB_SUCCESS != r)
+		return r;
+	if (size + db->padsize > info.me_mapsize) {
 		size = ((size / (db->padsize)) + 2) * db->padsize;
 		r = _do_resize(db, size);
 	}
-done:
 	return r;
 }
 
-static INLINE int _txn_begin(db_t db, MDB_txn *parent, unsigned int flags, MDB_txn **txn){
+static INLINE int
+_txn_begin(db_t db, MDB_txn *parent, unsigned int flags, MDB_txn **txn)
+{
 	int r;
-
+	// TODO: !!!!!!!!!!!!!!!!
 	// Here's the deal - we need to grow the mapsize if:
 	//  * we are a write transaction, and there is less than 1gb overhead
 	//  * txn fails with MDB_MAP_RESIZED
 	// However, mapsize may only be altered if there are no active txns in this process.
 	pthread_mutex_lock(&(db->mutex));
-	if(flags & MDB_RDONLY){
+	if (flags & MDB_RDONLY) {
 		// don't care about overhead for readonly txns
 		r = _mdb_txn_begin((MDB_env *)db->env, parent, flags, txn);
-		while(MDB_MAP_RESIZED == r){
+		while (MDB_MAP_RESIZED == r) {
 			r = _do_resize(db, 0);
-			if(DB_SUCCESS == r)
+			if (DB_SUCCESS == r)
 				r = _mdb_txn_begin((MDB_env *)db->env, parent, flags, txn);
 		}
-	}else if(parent){
+	} else if (parent) {
 		// cannot resize map for nested txns
 		r = _mdb_txn_begin((MDB_env *)db->env, parent, flags, txn);
-	}else{
+	} else {
 		// ensure we have room for growth prior to opening write txns
-		do{
+		do {
 			r = _auto_resize(db);
-			if(DB_SUCCESS == r)
+			if (DB_SUCCESS == r)
 				r = _mdb_txn_begin((MDB_env *)db->env, parent, flags, txn);
-		}while(MDB_MAP_RESIZED == r);
+		} while(MDB_MAP_RESIZED == r);
 	}
-	if(DB_SUCCESS == r)
+	if (DB_SUCCESS == r)
 		db->txns++;
-	else if(0 == db->txns)
+	else if (0 == db->txns)
 		pthread_cond_signal(&db->cond);
 	pthread_mutex_unlock(&db->mutex);
-
 	return r;
 }
 // static INLINE int _txn_begin(db_t db, MDB_txn *parent, unsigned int flags, MDB_txn **txn){
@@ -701,7 +715,7 @@ void db_close(db_t db){
 	// To fix MacOS `mdb_env_close` seg faulting
 	// int dead;
 	// mdb_reader_check((MDB_env *)db->env, &dead);
-	// if (db->handles)
+	if (db->handles)
 		free(db->handles);
 	mdb_env_close((MDB_env *)db->env);
 	((volatile db_t) db)->env = NULL;
@@ -760,13 +774,13 @@ int txn_iter_new(iter_t *iter, txn_t txn, int dbi, void *pfx, const unsigned int
 int txn_iter_init(iter_t iter, txn_t txn, int dbi, void *pfx, const unsigned int len)
 {
 	int r = txn_cursor_init((cursor_t)iter, txn, dbi);
-	if (DB_SUCCESS == r) {
+	if LIKELY(DB_SUCCESS == r) {
 		iter->r = DB_SUCCESS;
 		iter->pfxlen = len;
 		iter->release = 0;
 		if (len) {
 			iter->pfx = smalloc(len);
-			if (!iter->pfx)
+			if UNLIKELY(!iter->pfx)
 				return errno;
 			memcpy(iter->pfx, pfx, len);
 			iter->key.data = iter->pfx;

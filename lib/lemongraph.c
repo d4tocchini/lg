@@ -416,11 +416,11 @@ entry_t graph_entry(graph_txn_t txn, const logID_t id){
 }
 
 
-int graph_string_lookup(ggtxn_t* txn, strID_t *id, void const *data, const size_t len){
+int graph_string_lookup(LG_txn* txn, strID_t *id, void const *data, const size_t len){
     return ggblob_resolve(txn, id, data, len, 1);
 }
 
-int graph_string_resolve(ggtxn_t* txn, strID_t *id, void const *data, const size_t len){
+int graph_string_resolve(LG_txn* txn, strID_t *id, void const *data, const size_t len){
 	return ggblob_resolve(txn, id, data, len, 0);
 }
 
@@ -937,7 +937,7 @@ graph_txn_t graph_txn_begin(graph_t g, graph_txn_t parent, unsigned int flags){
 
 int graph_txn_commit(graph_txn_t txn) {
 	int r;
-	ggtxn_commit(txn);
+	lg_txn_commit(txn);
 	free(txn);
 	return r;
 }

@@ -199,9 +199,12 @@ typedef const struct {
 typedef struct buffer_t {
 	size_t size;   	// size of the data item
 	union {
-		void* data; // address of the data item
-		uint8_t* u8;
-		char* 	 ch;
+		void    * data; // address of the data item
+		char    * ch;
+		uint8_t * u8;
+		uint16_t* u16;
+		uint32_t* u32;
+		uint64_t* u64;
 	};
 } buffer_t;
 

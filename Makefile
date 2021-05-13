@@ -14,10 +14,11 @@ SNAPSHOT:=lg-$(shell date +%Y%m%d)
 
 default: build
 
-liblemongraph.a:  $(LMDB_OBJS) lemongraph.o db.o counter.o afsync.o avl.o
-liblemongraph.so: $(LMDB_OBJS) lemongraph.o db.o counter.o afsync.o avl.o
-liblemongraph.so: LDFLAGS=-pthread
-liblemongraph.so: LDLIBS=-lz
+liblemongraph.a:  $(LMDB_OBJS) lemongraph.o afsync.o avl.o
+# liblemongraph.a:  $(LMDB_OBJS) lemongraph.o db.o counter.o afsync.o avl.o
+# liblemongraph.so: $(LMDB_OBJS) lemongraph.o db.o counter.o afsync.o avl.o
+# liblemongraph.so: LDFLAGS=-pthread
+# liblemongraph.so: LDLIBS=-lz
 # $(LMDB)/mdb.c:    deps
 # $(LMDB)/midl.c:   deps
 # db.o:             deps

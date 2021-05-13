@@ -1,6 +1,6 @@
 #ifndef _LG_HEADER
 #define _LG_HEADER
-
+// #define assert(x)
 #include "std.h"
 #include "db.h"
 
@@ -19,11 +19,10 @@
 #define DB_KVBM        11
 #define DB_TXNLOG      12
 
-#define LG_txn ggtxn_t
+// #define LG_graph LG_graph
 #define LG_Node ggnode_t
 #define LG_Edge ggedge_t
 #define LG_Prop ggprop_t
-#define LG_Iter ggiter_t
 
 // data
 // typedef uint32_t    LG_id;
@@ -67,7 +66,6 @@ pod_t {
     pod_id_t 	    id;
 } pod_t;
 
-
 #define pod_num(x) 	    ((pod_t){ .id=(pod_id_t)(x) })
 #define pod_buf(x, sz) 	((pod_t){ .data=(pod_data_t)(x), .size=(pod_size_t)(sz) })
 #define _pod_str(x)       pod_buf(x, strlen(x))
@@ -77,7 +75,7 @@ pod_t {
 #define ggbuf           pod_buf;
 
 typedef struct
-ggtxn_t {
+LG_txn {
     // status codes
     // #define G_NOTFOUND  DB_NOTFOUND
     // #define G_SUCCESS   DB_SUCCESS
@@ -96,20 +94,20 @@ ggtxn_t {
     LG_log  prev_count;
     LG_size prev_nodes;
     LG_size prev_edges;
-} ggtxn_t;
+} LG_txn;
 
 #define TXN_DB(txn) ((txn_t)(txn))->db
 #define TXN_RW(txn) ((txn)->txn.rw)
 #define TXN_RO(txn) ((txn)->txn.ro)
-#define TXN_PARENT(txn) ((ggtxn_t*)(((txn_t)(txn))->parent))
+#define TXN_PARENT(txn) ((LG_txn*)(((txn_t)(txn))->parent))
 
 
-LG_id ggdb_next_id(ggtxn_t* txn, const int consume, LG_id * const cache, const int db1, const int venc);
-int pod_resolve(ggtxn_t* txn, pod_t* d, int readonly);
-char* graph_string(ggtxn_t* txn, LG_str id, size_t *len);
-static INLINE int ggblob_resolve(ggtxn_t* txn, LG_str *ret, void const *data, const size_t len, int readonly);
-static INLINE char* graph_string_enc(ggtxn_t* txn, void *id_enc, size_t *slen);
-static INLINE int ggdb_resolve_blob(ggtxn_t* txn, LG_id *ret, char const *data, const size_t len, const int readonly, LG_id * const cache, int db1, int db2);
+LG_id ggdb_next_id(LG_txn* txn, const int consume, LG_id * const cache, const int db1, const int venc);
+int pod_resolve(LG_txn* txn, pod_t* d, int readonly);
+char* graph_string(LG_txn* txn, LG_str id, size_t *len);
+static INLINE int ggblob_resolve(LG_txn* txn, LG_str *ret, void const *data, const size_t len, int readonly);
+static INLINE char* graph_string_enc(LG_txn* txn, void *id_enc, size_t *slen);
+static INLINE int ggdb_resolve_blob(LG_txn* txn, LG_id *ret, char const *data, const size_t len, const int readonly, LG_id * const cache, int db1, int db2);
     // TODO: ugh, returns 1 for success, 0 for failure (only for readonly)
 
 
@@ -173,13 +171,13 @@ ggprop_t {
 } ggprop_t;
 
 typedef struct
-LG_Iter {
+LG_iter {
     struct iter_t iter;
-    ggtxn_t* txn;
+    LG_txn* txn;
     LG_log beforeID;
-    struct LG_Iter* next;
+    struct LG_iter* next;
     int head_active;
-} LG_Iter;
+} LG_iter;
 
 //
 
@@ -196,9 +194,9 @@ pool_t {
 // graph
 
 typedef struct
-ggraph_t {
+LG_graph {
     struct db_t db;
-} ggraph_t;
+} LG_graph;
 
 
 // context
@@ -218,10 +216,10 @@ ggctx_t {
         #define GGgraphc 8
     #endif
 
-    ggraph_t root;
+    LG_graph root;
     pool_t graph_pool;
 
-    ggtxn_t txns[GGtxnc];
+    LG_txn txns[GGtxnc];
     int txni;
     int txnc;
     ggnode_t nodes[GGnodec];
@@ -230,7 +228,7 @@ ggctx_t {
     ggedge_t edge[GGedgec];
     int edgei;
     int edgec;
-    ggraph_t graphs[GGgraphc];
+    LG_graph graphs[GGgraphc];
     int graphi;
     int graphc;
 
@@ -238,6 +236,15 @@ ggctx_t {
     int basepath_len;
     char basepath[256];
 } ggctx_t;
+
+// lg api
+
+int     lg_init(const char* path);
+int     lg_open(LG_graph* g, const char * const subpath, const int flags);
+void    lg_close(LG_graph* g);
+int     lg_rm(LG_graph* g);
+//      lg_mktemp
+//      lg_exists
 
 // scoped sugar api
 
@@ -320,14 +327,6 @@ ggctx_t {
 #define node_edges_type_out_(itr, src, type)       lg_node_edges_type_out(txn, itr, src, type, 0)
 #define node_edges_type_out_b4(itr, src, type, b4) lg_node_edges_type_out(txn, itr, src, type, b4)
 
-// lg api
-
-int     lg_init(const char* path);
-int     lg_open(ggraph_t* g, const char * const subpath, const int flags);
-void    lg_close(ggraph_t* g);
-int     lg_rm(ggraph_t* g);
-//      lg_mktemp
-//      lg_exists
 
 LG_log  lg_delete(LG_txn* txn, LG_log id);
 
@@ -369,50 +368,57 @@ int     lg_blob_read(LG_txn* txn, const LG_blob id, LG_Blob* ref);
 
 // iterators
 
-// LG_Iter* lg_iter_alloc();
-LG_Iter* lg_iter_new(    LG_txn* txn,                int dbi, void *pfx, size_t pfxlen, LG_log b4);
-LG_Iter* lg_iter_p1_new( LG_txn* txn,                int dbi, LG_id id,                 LG_log b4);
-int      lg_iter_init(   LG_txn* txn, LG_Iter* iter, int dbi, void *pfx, size_t pfxlen, LG_log b4);
-int      lg_iter_p1_init(LG_txn* txn, LG_Iter* iter, int dbi, LG_id id,                 LG_log b4);
-int      lg_iter_p2_init(LG_txn* txn, LG_Iter* iter, int dbi, LG_id id, LG_id id2,      LG_log b4);
-void     lg_iter_close(LG_Iter* iter);
-LG_id    lg_iter_next(LG_Iter* iter);
-LG_Iter* lg_iter_concat(unsigned int count, ...);
+// LG_iter* lg_iter_alloc();
+LG_iter* lg_iter_new(    LG_txn* txn,                int dbi, void *pfx, size_t pfxlen, LG_log b4);
+LG_iter* lg_iter_p1_new( LG_txn* txn,                int dbi, LG_id id,                 LG_log b4);
+int      lg_iter_init(   LG_txn* txn, LG_iter* iter, int dbi, void *pfx, size_t pfxlen, LG_log b4);
+int      lg_iter_p1_init(LG_txn* txn, LG_iter* iter, int dbi, LG_id id,                 LG_log b4);
+int      lg_iter_p2_init(LG_txn* txn, LG_iter* iter, int dbi, LG_id id, LG_id id2,      LG_log b4);
+void     lg_iter_close(LG_iter* iter);
+LG_id    lg_iter_next(LG_iter* iter);
+LG_iter* lg_iter_concat(unsigned int count, ...);
+
+#define LG_FOR_EACH(it, VNAME, CODE) \
+{ \
+    LG_log VNAME; \
+    while (VNAME = lg_iter_next(it)) { \
+        CODE \
+    } \
+    lg_iter_close(it); \
+}
 
 
+int lg_graph_open(LG_graph* g, const char * const path, const int flags, const int mode, const int db_flags);
 
-
-
-int ggraph_open(ggraph_t* g, const char * const path, const int flags, const int mode, const int db_flags);
-
-int ggtxn_begin(ggtxn_t* txn, ggraph_t* g, unsigned int flags);
-int ggtxn_begin_child(ggtxn_t* txn, ggraph_t* g, ggtxn_t* parent, unsigned int flags);
-int ggtxn_commit(ggtxn_t* txn);
-void ggtxn_abort(ggtxn_t* txn);
+int     lg_txn_begin(LG_txn* txn, LG_graph* g, unsigned int flags);
+int     lg_txn_begin_child(LG_txn* txn, LG_graph* g, LG_txn* parent, unsigned int flags);
+int     lg_txn_commit(LG_txn* txn);
+void    lg_txn_abort(LG_txn* txn);
+//TODO: int     lg_txn_reset(LG_txn* txn)
 
 #define LG_WRITE(graph, CODE) \
 do { \
-    ggtxn_t txn_d; \
-    ggtxn_t* txn = &txn_d; \
-    ggtxn_begin(txn, graph, 0); \
+    LG_txn txn_d; \
+    LG_txn* txn = &txn_d; \
+    lg_txn_begin(txn, graph, 0); \
     CODE \
     LG_COMMIT \
 } while (0);
 
 #define LG_READ(graph, CODE) \
 do { \
-    ggtxn_t txn_d; \
-    ggtxn_t* txn = &txn_d; \
-    ggtxn_begin(txn, graph, DB_RDONLY); \
+    LG_txn txn_d; \
+    LG_txn* txn = &txn_d; \
+    lg_txn_begin(txn, graph, DB_RDONLY); \
     CODE \
     LG_ABORT \
 } while (0);
 
 #define LG_COMMIT \
-    ggtxn_commit(txn); \
+    lg_txn_commit(txn); \
     break;
 #define LG_ABORT \
-    ggtxn_abort(txn); \
+    lg_txn_abort(txn); \
     break;
 
 #define log_next_() lg_log_next(txn)
@@ -433,13 +439,13 @@ do { \
 
     // #define ggWRITE(CODE) \
     // do { \
-    //     ggtxn_t* txn = ggtxn_begin(graph, NULL, 0); \
+    //     LG_txn* txn = lg_txn_begin(graph, NULL, 0); \
     //     ggtxn_push(txn);
     //     CODE \
     // } while (0);
 
     // #define gCOMMIT() \
-    //     ggtxn_commit(txn); \
+    //     lg_txn_commit(txn); \
     //     ggtxn_pop(txn); \
     //     break;
 
@@ -468,6 +474,7 @@ extern ggctx_t ggctx;
 
 #include "./kv.h"
 #include "./serdes.h"
+#include "./msgpack.h"
 
 
 // ============================================================================
@@ -482,15 +489,17 @@ ggctx_t ggctx;
 #define INCLUDE_SOURCE
 #include "c4/fs.h"
 
-#include "./kv.h"
 #include "./serdes.h"
-#include "./ggdb.c"
+#include "./msgpack.h"
+#include "./db.c"
+#include "./kv.h"
+#include "./lg_internal.c"
 
 static INLINE int       _lg_init_basepath(const char *argv0);
 static INLINE LG_log    _lg_log_append(LG_txn* txn, buffer_t* log_buf, LG_log delID);
 static INLINE void      __lg_log_append_deletion(LG_txn* txn, const LG_log newrecID, const LG_log oldrecID, uint8_t *mem);
-static INLINE LG_log    _lg_iter_next_id(LG_Iter* iter);
-static INLINE LG_log    __lg_iter_blarf_id(LG_Iter* iter);
+static INLINE LG_log    _lg_iter_next_id(LG_iter* iter);
+static INLINE LG_log    __lg_iter_blarf_id(LG_iter* iter);
 typedef enum
 ggerr_t {
     // https://github.com/criptych/physfs/blob/1646de2459cab42fb9e2f06a70b50148e80b3f4c/src/physfs.h#L3395
@@ -523,7 +532,7 @@ void _lg_set_errcode(ggerr_t err)
 int
 lg_init(const char* path)
 {
-    const ggraph_t* graph;
+    const LG_graph* graph;
     LG_txn txn;
     // gg = lg_malloc(sizeof(lg_t));
     // GG_BAIL_IF(
@@ -537,47 +546,39 @@ lg_init(const char* path)
         const int os_flags = O_RDWR | O_CREAT;
         const int mode = 0760;
         const int db_flags = 0;
-        ggraph_open(graph, path, os_flags, mode, db_flags);
+        lg_graph_open(graph, path, os_flags, mode, db_flags);
         if (graph == NULL) {
             GG_PRINT_ERRNO()
             return 1;
         }
     }
     // setup & clear kv for current pid
-    LG_kv proc_kv;
-    pod_t proc_domain = pod_str("proc");
     int pid = getpid();
     ggctx.pid = pid;
-    {
-        if UNLIKELY(ggtxn_begin(&txn, graph, 0)) {
-            GG_PRINT_ERRNO()
-            return 1;
-        }
-        // pod_num(~((pod_id_t)pid)), 0);
-        pod_resolve(&txn, &proc_domain, 0);
-        lg_kv_init(&proc_kv, &txn, proc_domain.id, 0);
+    // LG_WRITE(graph,
+    //     LG_kv proc_kv;
+    //     lg_kv_init(&proc_kv, &txn, str_("proc"), 0);
 
-        /*
-        ggkv_key_str(&proc_kv, "len");
-        // pod_t val;
-        // ggkv_get(&proc_kv, &key, &val);
-        int len = ggkv_get_i32(&proc_kv, &key);
+    //     /*
+    //     ggkv_key_str(&proc_kv, "len");
+    //     // pod_t val;
+    //     // ggkv_get(&proc_kv, &key, &val);
+    //     int len = ggkv_get_i32(&proc_kv, &key);
+    //     while (len--) {
+    //         ggkv_key_strf("%i/pid",len);
+    //         int pid = ggkv_get_i32(&proc_kv);
+    //         ggkv_key_strf("%i/path_crc",len);
+    //         int path_crc = ggkv_get_i32(&path_crc);
+    //         if (path_crc != pid_get_path_crc) {
+    //             break;
+    //         }
+    //     }
 
-        while (len--) {
-            ggkv_key_strf("%i/pid",len);
-            int pid = ggkv_get_i32(&proc_kv);
-            ggkv_key_strf("%i/path_crc",len);
-            int path_crc = ggkv_get_i32(&path_crc);
-            if (path_crc != pid_get_path_crc) {
-                break;
-            }
-        }
-
-        // kv_clear(&proc_kv);
-        // kv_deref this frees
-        */
-        ggtxn_commit(&txn);
-    }
+    //     // kv_clear(&proc_kv);
+    //     // kv_deref this frees
+    //     */
+    //     // lg_txn_commit(&txn);
+    // )
     return 0;
 }
 
@@ -615,7 +616,7 @@ _lg_init_basepath(const char *argv0)
 
 
 int
-lg_open(ggraph_t* g, const char * const subpath, const int flags)
+lg_open(LG_graph* g, const char * const subpath, const int flags)
 /*
     TODO:
         * ensure graph subpath only opened once?
@@ -623,7 +624,7 @@ lg_open(ggraph_t* g, const char * const subpath, const int flags)
 */
 {
     // ++ggctx.graphi;
-    // ggraph_t g = ggctx.graphs[ggctx.graphi];
+    // LG_graph g = ggctx.graphs[ggctx.graphi];
     char *path = ggctx.basepath;
     const int basepath_len = ggctx.basepath_len;
     char *dirsep = NULL;
@@ -647,20 +648,20 @@ lg_open(ggraph_t* g, const char * const subpath, const int flags)
     const int mode = 0760;
     const int db_flags = 0;
     GG_BAIL_IF(
-        ggraph_open(g, path, os_flags, mode, db_flags)
+        lg_graph_open(g, path, os_flags, mode, db_flags)
     , GGERROR, errno);
     return 0;
 }
 
 void
-lg_close(ggraph_t* g)
+lg_close(LG_graph* g)
 {
     if (g)
 		db_close((db_t)g);
 }
 
 int
-lg_rm(ggraph_t* g)
+lg_rm(LG_graph* g)
 {
     if (!g)
         return -1;
@@ -670,11 +671,11 @@ lg_rm(ggraph_t* g)
     const int len = strlen(_path) + 5 + 1;
     char path[len];
     strcpy(path, _path);
-    db_close((db_t)g);
     r = rm(path);
     if UNLIKELY(r)
         return r;
     strcat(path, "-lock");
+    db_close((db_t)g);
     r = rm(path);
     return r;
 }
@@ -682,13 +683,13 @@ lg_rm(ggraph_t* g)
 // void* ggpool_next(ggpoot_t pool)
 // {}
 
-// ggraph_t* _ggraph_next()
+// LG_graph* _ggraph_next()
 // {
 //     // ggctx.graphs// }
 
 
 int
-ggraph_open(ggraph_t* g, const char * const path, const int os_flags, const int mode, const int db_flags)
+lg_graph_open(LG_graph* g, const char * const path, const int os_flags, const int mode, const int db_flags)
 {
     int r;
     // fixme? padsize hardcoded to 1gb
@@ -982,7 +983,7 @@ __lg_log_append_deletion(LG_txn* txn, const LG_log newrecID, const LG_log oldrec
 	r = db_put((txn_t)txn, DB_LOG, &key, &newdata, 0);
 	assert(DB_SUCCESS == r);
 	// recursively delete item properties, and edges if item is a node
-    LG_Iter* iter;
+    LG_iter* iter;
 	if (GRAPH_NODE == rectype) {
         /*
         TODO: malloc-free solution ?
@@ -1016,7 +1017,7 @@ lg_nodes_count(LG_txn* txn, LG_log b4)
     const LG_log next = lg_log_next(txn);
     if (!b4 || b4 > next)
 		b4 = next;
-	if (1 == b4)
+	if UNLIKELY(1 == b4)
 		return 0;
 	struct txn_info_t info;
     int r = _lg_txn_info_read(txn, &info, b4);
@@ -1024,7 +1025,7 @@ lg_nodes_count(LG_txn* txn, LG_log b4)
 		return info.nodes;
 	// fallback to scanning
     LG_size count = 0;
-	LG_Iter iter;
+	LG_iter iter;
     lg_nodes(txn, &iter, b4);
 	while (lg_iter_next(&iter))
 		count++;
@@ -1038,17 +1039,15 @@ lg_edges_count(LG_txn* txn, LG_log b4)
     const LG_log next = lg_log_next(txn);
     if (!b4 || b4 > next)
 		b4 = next;
-	if (1 == b4)
+	if UNLIKELY(1 == b4)
 		return 0;
 	struct txn_info_t info;
 	int r = _lg_txn_info_read(txn, &info, b4);
-	if (DB_SUCCESS == r) {
+	if (DB_SUCCESS == r)
 		return info.edges;
-    }
-
 	// fallback to scanning
     LG_size count = 0;
-	LG_Iter iter;
+	LG_iter iter;
     lg_edges(txn, &iter, b4);
 	while (lg_iter_next(&iter))
 		count++;
@@ -1059,13 +1058,13 @@ lg_edges_count(LG_txn* txn, LG_log b4)
 /*
     ZZZ: graph_iter_new
 */
-LG_Iter*
+LG_iter*
 lg_iter_new(LG_txn* txn, int dbi, void *pfx, size_t pfxlen, LG_log b4)
 {
-	LG_Iter* itr = smalloc(sizeof(*itr));
-	if (itr) {
+	LG_iter* itr = smalloc(sizeof(*itr));
+	if LIKELY(itr) {
 		int r = lg_iter_init(txn, itr, dbi, pfx, pfxlen, b4);
-		if (r) {
+		if UNLIKELY(r) {
 			free(itr);
 			itr = NULL;
 		}
@@ -1074,7 +1073,7 @@ lg_iter_new(LG_txn* txn, int dbi, void *pfx, size_t pfxlen, LG_log b4)
 }
 
 int
-lg_iter_init(LG_txn* txn, LG_Iter* iter,
+lg_iter_init(LG_txn* txn, LG_iter* iter,
     int dbi, void *pfx, size_t pfxlen, LG_log b4)
 {
     int r = txn_iter_init((iter_t)iter, (txn_t)txn, dbi, pfx, pfxlen);
@@ -1092,7 +1091,7 @@ lg_iter_init(LG_txn* txn, LG_Iter* iter,
 /*
     ZZZ: _graph_entry_idx
 */
-LG_Iter*
+LG_iter*
 lg_iter_p1_new(LG_txn* txn,
     int dbi, LG_id id, LG_log b4)
 {
@@ -1103,7 +1102,7 @@ lg_iter_p1_new(LG_txn* txn,
 }
 
 int
-lg_iter_p1_init(LG_txn* txn, LG_Iter* iter,
+lg_iter_p1_init(LG_txn* txn, LG_iter* iter,
     int dbi, LG_id id, LG_log b4)
 {
 	uint8_t pfx[esizeof(id)];
@@ -1113,7 +1112,7 @@ lg_iter_p1_init(LG_txn* txn, LG_Iter* iter,
 }
 
 int
-lg_iter_p2_init(LG_txn* txn, LG_Iter* iter,
+lg_iter_p2_init(LG_txn* txn, LG_iter* iter,
     int dbi, LG_id id, LG_id id2, LG_log b4)
 {
 	uint8_t pfx[esizeof(id) + esizeof(id2)];
@@ -1123,10 +1122,11 @@ lg_iter_p2_init(LG_txn* txn, LG_Iter* iter,
 	return lg_iter_init(txn, iter, dbi, pfx, pfxlen, b4);
 }
 
-void lg_iter_close(LG_Iter* iter)
+void
+lg_iter_close(LG_iter* iter)
 {
 	while (iter) {
-		LG_Iter* next = iter->next;
+		LG_iter* next = iter->next;
 		iter_close((iter_t)iter); // TODO: move to malloc-free internals...
 		iter = next;
 	}
@@ -1135,22 +1135,22 @@ void lg_iter_close(LG_Iter* iter)
 /*
     ZZZ: graph_iter_concat
 */
-LG_Iter*
+LG_iter*
 lg_iter_concat(unsigned int count, ...)
 {
-	LG_Iter* head = NULL;
-    LG_Iter* tail = NULL;
+	LG_iter* head = NULL;
+    LG_iter* tail = NULL;
 	va_list ap;
 	va_start(ap, count);
-	while(count--){
-		LG_Iter* current = va_arg(ap, LG_Iter*);
-		if(!current)
+	while (count--) {
+		LG_iter* current = va_arg(ap, LG_iter*);
+		if UNLIKELY(!current)
 			continue;
-		if(tail)
+		if (tail)
 			tail->next = current;
 		else
 			head = tail = current;
-		while(tail->next)
+		while (tail->next)
 			tail = tail->next;
 	}
 	va_end(ap);
@@ -1161,7 +1161,7 @@ lg_iter_concat(unsigned int count, ...)
     ZZZ: graph_iter_next
 */
 LG_id
-lg_iter_next(LG_Iter* iter)
+lg_iter_next(LG_iter* iter)
 {
     if UNLIKELY(iter == NULL)
         return 0;
@@ -1193,7 +1193,7 @@ lg_iter_next(LG_Iter* iter)
     ZZZ: _iter_idx_nextID
 */
 static INLINE LG_log
-_lg_iter_next_id(LG_Iter* iter)
+_lg_iter_next_id(LG_iter* iter)
 {
 	LG_log id = 0;
 	if (iter->head_active) {
@@ -1208,7 +1208,7 @@ _lg_iter_next_id(LG_Iter* iter)
 		if ((id = __lg_iter_blarf_id(iter->next)))
 			return id;
 		// exhausted - remove chained iterator
-		LG_Iter* tmp = iter->next;
+		LG_iter* tmp = iter->next;
 		iter->next = tmp->next;
 		iter_close((iter_t)tmp);
 		iter->txn = (iter->next) ? iter->next->txn : NULL;
@@ -1217,7 +1217,7 @@ _lg_iter_next_id(LG_Iter* iter)
 }
 
 static INLINE LG_log
-__lg_iter_blarf_id(LG_Iter* iter)
+__lg_iter_blarf_id(LG_iter* iter)
 {
     LG_log b4 = iter->beforeID;
     iter_t _iter = (iter_t)iter;
@@ -1267,9 +1267,9 @@ lg_node_read(LG_txn* txn, const LG_node id, LG_Node* ref)
     buffer_t buf;
     // TODO: ref->id = 0;
     int r = lg_log_read(txn, (LG_log)id, &buf);
-    if (DB_SUCCESS == r) {
+    if LIKELY(DB_SUCCESS == r) {
         const uint8_t rectype = *((uint8_t *)buf.data);
-        if (GRAPH_NODE != rectype)
+        if UNLIKELY(GRAPH_NODE != rectype)
             return 1; // TODO: errno wrong rectype
         ref->id = id;
 		ref->rectype = rectype;
@@ -1287,9 +1287,9 @@ lg_edge_read(LG_txn* txn, const LG_edge id, LG_Edge* ref)
     buffer_t buf;
     // TODO: ref->id = 0;
     int r = lg_log_read(txn, (LG_log)id, &buf);
-    if (DB_SUCCESS == r) {
+    if LIKELY(DB_SUCCESS == r) {
         const uint8_t rectype = *(uint8_t *)buf.data;
-        if (GRAPH_EDGE != rectype)
+        if UNLIKELY(GRAPH_EDGE != rectype)
             return 1; // TODO: errno wrong rectype
         ref->id = id;
 		ref->rectype = rectype;
@@ -1309,9 +1309,9 @@ lg_prop_read(LG_txn* txn, const LG_prop id, LG_Prop* ref)
     buffer_t buf;
     // TODO: ref->id = 0;
     int r = lg_log_read(txn, (LG_log)id, &buf);
-    if (DB_SUCCESS == r) {
+    if LIKELY(DB_SUCCESS == r) {
         const uint8_t rectype = *(uint8_t *)buf.data;
-        if (GRAPH_PROP != rectype)
+        if UNLIKELY(GRAPH_PROP != rectype)
             return 1; // TODO: errno wrong rectype
         ref->id = id;
 		ref->rectype = rectype;
@@ -1333,7 +1333,7 @@ lg_blob_read(LG_txn* txn, const LG_blob id, LG_Blob* ref)
     }
     buffer_t key = { sizeof(id), &id };
     int r = db_get((txn_t)txn, DB_SCALAR, &key, &(ref->buffer));
-    if (DB_SUCCESS == r)
+    if LIKELY(DB_SUCCESS == r)
         ref->id = id;
     return r;
 }

@@ -29,10 +29,11 @@ LG_bufs {
 #define LG_pq LG_kv
 #define LG_ob LG_kv
 #define LG_kv_iter ggkv_iter_t
+#define LG_pq_iter ggkv_iter_t
 
 typedef struct
 LG_kv {
-	ggtxn_t* txn;
+	LG_txn* txn;
 	LG_buf key;
 	LG_buf val;
 	int flags;
@@ -63,8 +64,21 @@ ggkv_iter_t {
 	LG_kv* kv;
 } ggkv_iter_t;
 
+typedef struct
+LG_pq_cursor {
+	#define LG_PQ_CURSOR_SIZE 512
+	size_t size;
+	union {
+		uint8_t u8[LG_PQ_CURSOR_SIZE];
+		void* data;
+	};
+	// ^ buf compat end
+	LG_buf val;
+
+} LG_pq_cursor;
+
 // kv
-void    lg_kv_init(LG_kv* kv, ggtxn_t* txn, LG_id domain_id, const int flags);
+void    lg_kv_init(LG_kv* kv, LG_txn* txn, LG_id domain_id, const int flags);
 void 	lg_kv_key(LG_kv* kv, LG_buf* key);
 int 	lg_kv_put(LG_kv* kv, LG_buf* val);
 int 	lg_kv_get(LG_kv* kv, LG_buf* val);
@@ -108,7 +122,7 @@ void	lg_kv_iter_close(LG_kv_iter* iter);
 	lg_kv_iter_close(iter);
 
 // // kv fifos
-void    lg_fifo_init(LG_kv* kv, ggtxn_t* txn, LG_id domain_id, const int flags);
+void    lg_fifo_init(LG_kv* kv, LG_txn* txn, LG_id domain_id, const int flags);
 int 	lg_fifo_push(LG_kv* kv, LG_buf* val);
 int 	lg_fifo_push_n(LG_kv* kv, LG_buf* vals, const int n);
 int 	lg_fifo_push_uint(LG_kv* kv, LG_uint val);
@@ -117,25 +131,42 @@ int		lg_fifo_peek(LG_kv* kv, LG_buf* val);
 int		lg_fifo_peek_n(LG_kv* kv, LG_buf* vals, const int count);
 int		lg_fifo_peek_uint(LG_kv* kv, LG_uint* x);
 int		lg_fifo_peek_uint_n(LG_kv* kv, LG_uint* vals, const int count);
-int 	lg_fifo_pop(LG_kv* kv, LG_buf* val);
-int		lg_fifo_pop_n(LG_kv* kv, LG_buf* vals, const int count);
+// int 	lg_fifo_pop(LG_kv* kv, LG_buf* val);
+// int	lg_fifo_pop_n(LG_kv* kv, LG_buf* vals, const int count);
 int		lg_fifo_pop_uint(LG_kv* kv, LG_uint* val);
 int		lg_fifo_pop_uint_n(LG_kv* kv, LG_uint* vals, const int count);
 #define lg_fifo_del(kv)		lg_fifo_del_n(kv, 1)
 int 	lg_fifo_del_n(LG_kv* kv, const int count);
 int 	lg_fifo_len(LG_kv* kv, LG_uint* len);
+#define lg_fifo_clear(kv)	lg_kv_clear(kv)
 #define lg_fifo_empty(kv)	lg_kv_empty(kv)
 
-// // kv priority queues
-// int kv_pq_add(kv_t kv, void *key, size_t klen, uint8_t priority);
-// int kv_pq_get(kv_t kv, void *key, size_t klen);
-// int kv_pq_del(kv_t kv, void *key, size_t klen);
-// kv_iter_t kv_pq_iter(kv_t kv);
-// int kv_pq_iter_next(kv_iter_t iter, void **data, size_t *dlen);
-// uint8_t *kv_pq_cursor(kv_t kv, uint8_t priority);
-// int kv_pq_cursor_next(ggtxn_t* txn, uint8_t *cursor, void **key, size_t *klen);
-// void kv_pq_cursor_close(uint8_t *cursor);
-
+// kv priority queues
+// we store two different structures under a domain:
+//   first:  enc(domID), 0, priority, counter => key
+//   second: enc(domID), 1, key => priority, counter
+// priority as well as the 0/1 are literal bytes
+// counter is up-to 256 bytes - can increment/decrement from [0 .. ((1<<2040)-1)]
+void    lg_pq_init(LG_kv* kv, LG_txn* txn, LG_id domain_id, const int flags);
+int 	lg_pq_add(LG_kv* kv, LG_buf* val, uint8_t priority); // TODO: ret??
+int 	lg_pq_get(LG_kv* kv, LG_buf* val, uint8_t *priority);
+int 	lg_pq_del(LG_kv* kv, LG_buf* val);
+#define lg_pq_clear(kv)		lg_kv_clear(kv)
+#define lg_pq_empty(kv)		lg_kv_empty(kv)
+// pq iterator
+int		lg_pq_iter(LG_kv* kv, LG_pq_iter* iter);
+bool	lg_pq_iter_next(LG_pq_iter* iter);
+#define lg_pq_iter_close(it) lg_kv_iter_close(it)
+#define LG_PQ_EACH(kv, iter, CODE) \
+	lg_pq_iter(kv, iter); \
+	while (lg_pq_iter_next(iter)) { \
+		CODE \
+	} \
+	lg_pq_iter_close(iter);
+// pq (persitable) cursor
+void 	lg_pq_cursor_init(LG_kv* kv, LG_pq_cursor* pq_cursor, uint8_t priority);
+bool 	lg_pq_cursor_next(LG_txn* txn, LG_pq_cursor* pq_cursor, LG_buf* val, uint8_t* priority);
+void 	lg_pq_cursor_close(LG_pq_cursor* pq_cursor);
 
 // void	lg_v_reset(LG_kv* kv);
 // void	lg_k_write_str(LG_kv* kv, const char* str);
@@ -152,7 +183,7 @@ int 	lg_fifo_len(LG_kv* kv, LG_uint* len);
 typedef LG_kv* kv_t;
 typedef ggkv_iter_t* kv_iter_t;
 // kv
-kv_t graph_kv(ggtxn_t* txn, const void *domain, const size_t dlen, const int flags);
+kv_t graph_kv(LG_txn* txn, const void *domain, const size_t dlen, const int flags);
 void *kv_get(kv_t kv, void *key, size_t klen, size_t *dlen);
 void *kv_first_key(kv_t kv, size_t *klen);
 void *kv_last_key(kv_t kv, size_t *len);
@@ -183,7 +214,7 @@ int kv_pq_del(kv_t kv, void *key, size_t klen);
 kv_iter_t kv_pq_iter(kv_t kv);
 int kv_pq_iter_next(kv_iter_t iter, void **data, size_t *dlen);
 uint8_t *kv_pq_cursor(kv_t kv, uint8_t priority);
-int kv_pq_cursor_next(ggtxn_t* txn, uint8_t *cursor, void **key, size_t *klen);
+int kv_pq_cursor_next(LG_txn* txn, uint8_t *cursor, void **key, size_t *klen);
 void kv_pq_cursor_close(uint8_t *cursor);
 
 
@@ -192,7 +223,7 @@ void kv_pq_cursor_close(uint8_t *cursor);
 
 
 
-void lg_kv_init(LG_kv* kv, ggtxn_t* txn, LG_id domain_id, const int flags)
+void lg_kv_init(LG_kv* kv, LG_txn* txn, LG_id domain_id, const int flags)
 {
     kv->txn = txn;
     kv->flags = flags;
@@ -205,7 +236,7 @@ void lg_kv_init(LG_kv* kv, ggtxn_t* txn, LG_id domain_id, const int flags)
     // return 1;
 }
 
-kv_t graph_kv(ggtxn_t* txn, const void *domain, const size_t dlen, const int flags)
+kv_t graph_kv(LG_txn* txn, const void *domain, const size_t dlen, const int flags)
 {
 	// kv_t kv = NULL;
 	// strID_t domainID;
@@ -241,7 +272,6 @@ lg_kv_key(LG_kv* kv, LG_buf* key)
 	assert(key && LG_KV_KEY_BUF_SIZE >= kv->key.size + key->size);
 	kv->key.size += key->size;
 	memcpy(&kv->kbuf[kv->klen], key->data, key->size);
-
 }
 
 int
@@ -574,7 +604,7 @@ void *kv_get(kv_t kv, void *key_data, size_t key_size, size_t *val_size)
 
 
 void
-lg_fifo_init(LG_kv* kv, ggtxn_t* txn, LG_id domain_id, const int flags)
+lg_fifo_init(LG_kv* kv, LG_txn* txn, LG_id domain_id, const int flags)
 {
 	// TODO: flags |= LG_KV_FIFO
 	lg_kv_key_reset(kv);
@@ -648,47 +678,18 @@ lg_fifo_peek_n(LG_kv* kv, LG_buf* vals, const int count)
 	return i;
 }
 
-int
-lg_fifo_pop(LG_kv* kv, LG_buf* val)
-{
-	return lg_fifo_pop_n(kv, val, 1);
-}
+// int
+// lg_fifo_pop(LG_kv* kv, LG_buf* val)
+// {
+// 	return lg_fifo_pop_n(kv, val, 1);
+// }
 
-int
-lg_fifo_pop_n(LG_kv* kv, LG_buf* vals, const int count)
-{
-
-	int n = lg_fifo_peek_n(kv, vals, count);
-	return kv_fifo_delete(kv, n);
-
-	// lg_kv_key_reset(kv);
-
-	// struct cursor_t cursor;
-	// int r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
-	// assert(DB_SUCCESS == r);
-	// int i = 0;
-	// while (i < count) {
-	// 	// TODO: !!!!!!!!
-	// 	r = cursor_first(&cursor, &kv->key, &kv->val, kv->kbuf, kv->klen);
-	// 	// r = cursor_first_key(&cursor, &kv->key, kv->kbuf, kv->klen);
-	// 	if (DB_SUCCESS == r) {
-	// 		// r = cursor_get(&cursor, &kv->key, &kv->val, DB_SET_KEY);
-	// 		// assert(DB_SUCCESS == r);
-	// 		vals[i].size = kv->val.size;
-	// 		vals[i].data = kv->val.data;
-	// 		r = cursor_del(&cursor, 0);
-	// 		assert(DB_SUCCESS == r);
-	// 		++i;
-	// 	}
-	// 	else {
-	// 		if UNLIKELY(DB_NOTFOUND != r)
-	// 			errno = r;
-	// 		break;
-	// 	}
-	// }
-	// cursor_close(&cursor);
-	// return i;
-}
+// int
+// lg_fifo_pop_n(LG_kv* kv, LG_buf* vals, const int count)
+// {
+// 	int n = lg_fifo_peek_n(kv, vals, count);
+// 	return kv_fifo_delete(kv, n);
+// }
 
 
 int
@@ -842,6 +843,271 @@ lg_fifo_len(LG_kv* kv, LG_uint* len)
 	return r;
 }
 
+
+
+
+
+void
+lg_pq_init(LG_kv* kv, LG_txn* txn, LG_id domain_id, const int flags)
+{
+	// TODO: flags |= LG_KV_PQ
+	lg_kv_key_reset(kv);
+	lg_kv_init(kv, txn, domain_id, flags);
+}
+
+// on success return 0, on error return < 0
+int
+lg_pq_add(LG_kv* kv, LG_buf* val, uint8_t priority)
+{
+	priority = 255 - priority; // # invert priority, internally high=0 low=255
+	int r;
+	int pc_len;
+	struct cursor_t cursor;
+	uint8_t pri_counter[257];
+	r = txn_cursor_init(&cursor, (txn_t)kv->txn, DB_KV);
+	if UNLIKELY(DB_SUCCESS != r)
+		return r;
+	// optionally swap out key w/ encoded string ID
+	r = DB_NOTFOUND;
+	//
+	// if(kv->flags & (LG_KV_MAP_KEYS|LG_KV_MAP_DATA)){
+	//  strID_t id;
+	//  uint8_t ekey[esizeof(id)];
+	// 	if(!ggblob_resolve(kv->txn, &id, key, klen, 0))
+	// 		goto done;
+	// 	klen = 0;
+	// 	key = ekey;
+	// 	encode(id, ekey, klen);
+	// }
+	//
+	// start with encoded domID
+	kv->key.data = kv->kbuf;
+	kv->key.size = kv->klen;
+	// we are checking secondary index
+	kv->kbuf[kv->key.size++] = 1;
+	// append key
+	assert(kv->key.size + val->size <= sizeof(kv->kbuf));
+	memcpy(kv->kbuf + kv->key.size, val->data, val->size);
+	kv->key.size += val->size;
+	// see if it's already somewhere in the queue
+	r = db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->val);
+	// start with encoded domID
+	kv->key.data = kv->kbuf;
+	kv->key.size = kv->klen;
+	// we are checking primary index
+	kv->kbuf[kv->key.size++] = 0;
+	// if found, use returned priority, counter to delete from primary index
+	if (DB_SUCCESS == r) {
+		// append old_pri, counter
+		assert(kv->key.size + kv->val.size <= sizeof(kv->kbuf));
+		memcpy(kv->kbuf + kv->key.size, kv->val.data, kv->val.size);
+		kv->key.size += kv->val.size;
+		// delete from primary index
+		r = db_del((txn_t)kv->txn, DB_KV, &kv->key, NULL);
+		assert(DB_SUCCESS == r);
+	}
+	// now insert new priority byte
+	kv->kbuf[kv->klen + 1] = priority;
+	// and find last key w/ that priority in primary index
+	r = cursor_last_key(&cursor, &kv->key, kv->kbuf, kv->klen+2);
+	const int tail = kv->klen + 2;
+	if (DB_SUCCESS == r) {
+		memcpy(kv->kbuf + tail, kv->key.data + tail, kv->key.size - tail);
+		// increment counter, grab length of pri & counter bytes
+		pc_len = 1 + ctr_inc(kv->kbuf + tail);
+	} else {
+		pc_len = 1 + ctr_init(kv->kbuf + tail);
+	}
+	kv->key.data = kv->kbuf;
+	kv->key.size = kv->klen + 1 + pc_len;
+	// snag copy
+	memcpy(pri_counter, kv->kbuf + kv->klen + 1, pc_len);
+	// add in new record in primary index
+	kv->val.data = val->data;
+	kv->val.size = val->size;
+	r = db_put((txn_t)kv->txn, DB_KV, &kv->key, &kv->val, 0);
+	assert(DB_SUCCESS == r);
+	// add reverse record in secondary index
+	kv->kbuf[kv->klen] = 1;
+	memcpy(kv->kbuf + kv->klen + 1, val->data, val->size);
+	kv->key.data = kv->kbuf;
+	kv->key.size = kv->klen + 1 + val->size;
+	kv->val.data = pri_counter;
+	kv->val.size = pc_len;
+	r = db_put((txn_t)kv->txn, DB_KV, &kv->key, &kv->val, 0);
+	assert(DB_SUCCESS == r);
+	cursor_close(&cursor);
+	return r;
+}
+
+// fetch priority[0..255] for key, on error return < 0
+int
+lg_pq_get(LG_kv* kv, LG_buf* val, uint8_t *priority)
+{
+	int r = DB_NOTFOUND;
+	// ZZZ: optionally swap out key w/ encoded string ID
+	// start with encoded domID
+	kv->key.data = kv->kbuf;
+	kv->key.size = kv->klen;
+	// we are checking secondary index
+	kv->kbuf[kv->key.size++] = 1;
+	// append key
+	assert(kv->key.size + val->size <= sizeof(kv->kbuf));
+	memcpy(kv->kbuf + kv->key.size, val->data, val->size);
+	kv->key.size += val->size;
+	// see if it's already somewhere in the queue
+	r = db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->val);
+	if (DB_SUCCESS == r)
+		*priority = 255 - *(uint8_t *)kv->val.data;
+	return r;
+}
+
+// on success return 0, on error return < 0
+int
+lg_pq_del(LG_kv* kv, LG_buf* val)
+{
+	int r;
+	// optionally swap out key w/ encoded string ID
+	r = DB_NOTFOUND;
+	//
+	// if (kv->flags & (LG_KV_MAP_KEYS|LG_KV_MAP_DATA)) {
+	// 	strID_t id;
+	// 	uint8_t ekey[esizeof(id)];
+	// 	if(!ggblob_resolve(kv->txn, &id, key, klen, 0))
+	// 		goto done;
+	// 	klen = 0;
+	// 	key = ekey;
+	// 	encode(id, ekey, klen);
+	// }
+	//
+	// start with encoded domID
+	kv->key.data = kv->kbuf;
+	kv->key.size = kv->klen;
+	// we are checking secondary index
+	kv->kbuf[kv->key.size++] = 1;
+	// append key
+	assert(kv->key.size + val->size <= sizeof(kv->kbuf));
+	memcpy(kv->kbuf + kv->key.size, val->data, val->size);
+	kv->key.size += val->size;
+	// see if it's already somewhere in the queue
+	r = db_get((txn_t)kv->txn, DB_KV, &kv->key, &kv->val);
+	// if found, use returned priority, counter to delete from primary index
+	if (DB_SUCCESS == r) {
+		// start with encoded domID
+		kv->key.data = kv->kbuf;
+		kv->key.size = kv->klen;
+		// we are checking primary index
+		kv->kbuf[kv->key.size++] = 0;
+		// append old_pri, counter
+		assert(kv->key.size + kv->val.size <= sizeof(kv->kbuf));
+		memcpy(kv->kbuf + kv->key.size, kv->val.data, kv->val.size);
+		kv->key.size += kv->val.size;
+		// delete from primary index
+		r = db_del((txn_t)kv->txn, DB_KV, &kv->key, NULL);
+		assert(DB_SUCCESS == r);
+		// rebuild secondary key
+		kv->kbuf[kv->klen] = 1;
+		memcpy(kv->kbuf + kv->klen + 1, val->data, val->size);
+		kv->key.data = kv->kbuf;
+		kv->key.size = kv->klen + 1 + val->size;
+		// delete from secondary index
+		r = db_del((txn_t)kv->txn, DB_KV, &kv->key, NULL);
+		assert(DB_SUCCESS == r);
+	}
+	return r;
+}
+
+int
+lg_pq_iter(LG_kv* kv, LG_pq_iter* iter)
+{
+	uint8_t pfx_data = 0;
+	LG_buf pfx = {.size = 1, .data = &pfx_data};
+	return lg_kv_iter_pfx(kv, iter, &pfx);
+}
+
+bool
+lg_pq_iter_next(LG_kv_iter* iter)
+{
+	// NOTE: no need to offset/use iter.key
+	return (DB_SUCCESS == iter_next((iter_t)iter));
+}
+
+
+void
+lg_pq_cursor_init(LG_kv* kv, LG_pq_cursor* pq_cursor, uint8_t priority)
+// cursor holds [decode flag][pfx][magic][priority][counter]
+// where:
+//	pfx is (encoded domain ID, 0)
+//	priority is 1 byte
+{
+	// uint8_t *cursor = smalloc(LG_PQ_CURSOR_SIZE);
+	pq_cursor->size = LG_PQ_CURSOR_SIZE;
+	uint8_t* cursor = pq_cursor->u8;
+	int len = kv->klen + 1;
+	// TODO: ? append decode flags
+	// cursor[0] = kv->flags & (LG_KV_MAP_KEYS|LG_KV_MAP_DATA);
+	// append encoded domain
+	memcpy(cursor + 1, kv->kbuf, kv->klen);
+	// append magic byte to select primary index
+	cursor[len++] = 0;
+	// append requested priority
+	cursor[len++] = 255 - priority;
+	// and initialize counter
+	ctr_init(cursor + len);
+}
+
+bool
+lg_pq_cursor_next(LG_txn* txn, LG_pq_cursor* pq_cursor, LG_buf* val, uint8_t* priority)
+{
+	// on success, advance cursor
+	uint8_t* cursor = pq_cursor->u8;
+	int r;
+	bool success;
+	LG_buf k;
+	struct cursor_t c;
+	const unsigned int domlen = enclen(cursor, 1);
+	// flags + domlen + magic + priority
+	const unsigned int ctroff = domlen + 3;
+	// domlen + magic
+	const unsigned int pfxlen = domlen + 1;
+	// skip flags byte
+	k.data = cursor + 1;
+	// encoded domain + magic + priority + counter
+	k.size = pfxlen + 1 + ctr_len(cursor + ctroff);
+	r = txn_cursor_init(&c, (txn_t)txn, DB_KV);
+	assert(DB_SUCCESS == r);
+	r = cursor_get(&c, &k, NULL, DB_SET_RANGE);
+	if (DB_SUCCESS != r)
+		goto done;
+	if (k.size < pfxlen || memcmp(k.data, cursor + 1, pfxlen)) {
+		r = DB_NOTFOUND;
+		goto done;
+	}
+	r = cursor_get(&c, &k, val, DB_GET_CURRENT);
+	if (DB_SUCCESS != r)
+		goto done;
+	// copy what we found
+	memcpy(cursor + 1, k.data, k.size);
+	// increment its counter
+	ctr_inc(cursor + ctroff);
+	// harvest priority
+	*priority = 255 - cursor[ctroff-1];
+	// TODO: ? possibly lookup result
+	// if (cursor[0])
+	// 	val->data = graph_string_enc(txn, v.data, (&val->size));
+done:
+	cursor_close(&c);
+	success = DB_SUCCESS == r;
+	if UNLIKELY(!success && DB_NOTFOUND != r)
+		errno = r;
+	return success;
+}
+
+void
+lg_pq_cursor_close(LG_pq_cursor* pq_cursor)
+{
+	// free(cursor);
+}
 
 
 
@@ -1049,13 +1315,6 @@ int kv_fifo_len(kv_t kv, uint64_t *len){
 	cursor_close(&cursor);
 	return r;
 }
-
-// priority queues on top of kv
-// we store two different structures under a domain:
-//   first:  enc(domID), 0, priority, counter => key
-//   second: enc(domID), 1, key => priority, counter
-// priority as well as the 0/1 are literal bytes
-// counter is up-to 256 bytes - can increment/decrement from [0 .. ((1<<2040)-1)]
 
 // fetch priority[0..255] for key, on error return < 0
 int kv_pq_get(kv_t kv, void *key, size_t klen){
@@ -1285,7 +1544,7 @@ uint8_t *kv_pq_cursor(kv_t kv, uint8_t priority){
 
 // on success, advance cursor, fill in key/klen, and return priority [0-255]
 // on error, return < 0
-int kv_pq_cursor_next(ggtxn_t* txn, uint8_t *cursor, void **key, size_t *klen){
+int kv_pq_cursor_next(LG_txn* txn, uint8_t *cursor, void **key, size_t *klen){
 	int r;
 	LG_buf k, v;
 	struct cursor_t c;

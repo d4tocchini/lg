@@ -86,12 +86,13 @@ typedef mi_heap_t  heap_t;
 // Please only use the ALIGNED macro before the type. Using after the variable declaration is not portable!
 #if defined(_MSC_VER)
     #define INLINE          __forceinline
+    #define ALIGNED(x)      __declspec(align(x))
     #define LIKELY(x)       ((x))
     #define UNLIKELY(x)     ((x))
-    #define ALIGNED(x)      __declspec(align(x))
 #else
     #define INLINE          __attribute__((always_inline)) inline
+    #define ALIGNED(x)      __attribute__((aligned(x)))
     #define LIKELY(x)       (__builtin_expect(!!(x), 1))
     #define UNLIKELY(x)     (__builtin_expect(!!(x), 0))
-    #define ALIGNED(x)      __attribute__((aligned(x)))
+        // http://blog.man7.org/2012/10/how-much-do-builtinexpect-likely-and.html
 #endif
